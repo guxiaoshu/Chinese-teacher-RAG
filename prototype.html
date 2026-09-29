@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>语文教学 RAG 助手 — 交互原型</title>
+<style>
+  :root{--bg:#f5f6f8;--panel:#fff;--border:#e3e6ea;--text:#1f2329;--muted:#6b7280;
+        --green:#2f7d5b;--green-bg:#eaf4ef;--blue:#3b6fd6;--blue-bg:#e9effb}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);display:flex;justify-content:center;padding:24px;
+       font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .app{display:grid;grid-template-columns:280px 1fr;width:1240px;max-width:100%;height:900px;
+       background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:hidden;
+       box-shadow:0 8px 30px rgba(0,0,0,.06)}
+
+  /* 侧边栏 */
+  .sidebar{background:#fafbfc;border-right:1px solid var(--border);padding:22px 18px;
+           display:flex;flex-direction:column;gap:20px;overflow-y:auto}
+  .brand{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--green);display:inline-block}
+  .api{font-size:13px;color:var(--green);background:var(--green-bg);padding:8px 12px;border-radius:8px;
+       display:flex;align-items:center;gap:6px}
+  .sec{font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.5px}
+  .card{border:1px solid var(--border);border-radius:10px;padding:12px;font-size:14px;margin-top:8px;background:#fff}
+  .card .row{display:flex;justify-content:space-between;align-items:center}
+  .card .row + .row{margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+  .tag{font-size:11px;padding:2px 8px;border-radius:99px;color:#fff}
+  .tag.pv{background:var(--green)} .tag.pb{background:var(--blue)}
+  .num{font-weight:700;font-size:16px}
+  .drop{border:1.5px dashed var(--border);border-radius:10px;padding:22px 12px;text-align:center;
+        color:var(--muted);font-size:13px;background:#fff;margin-top:8px}
+  .drop b{color:var(--green)}
+  .switch{display:flex;gap:8px;margin-top:10px}
+  .switch button{flex:1;padding:8px;font-size:13px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer}
+  .switch button.on{background:var(--green-bg);border-color:var(--green);color:var(--green);font-weight:600}
+  .scan{margin-top:10px;width:100%;padding:9px;font-size:13px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer}
+
+  /* 主区 */
+  main{display:flex;flex-direction:column;min-width:0}
+  .tabs{display:flex;border-bottom:1px solid var(--border);background:#fff;padding:0 8px;flex-shrink:0}
+  .tab{padding:14px 18px;font-size:14px;color:var(--muted);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent}
+  .tab.active{color:var(--green);border-bottom-color:var(--green);font-weight:600}
+  .chat{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:18px;background:#fff}
+  .panel{display:none;flex-direction:column;gap:18px}
+  .panel.active{display:flex}
+  .msg{max-width:86%;padding:14px 16px;border-radius:12px;font-size:14px;line-height:1.7}
+  .msg.user{align-self:flex-end;background:var(--green);color:#fff;border-bottom-right-radius:4px}
+  .msg.ai{align-self:flex-start;background:#f7f9f8;border:1px solid var(--border);border-bottom-left-radius:4px;min-width:60%}
+  .msg.ai h3{font-size:15px;margin-bottom:8px}
+  .msg.ai p{margin:6px 0}
+  .msg.ai ul{padding-left:18px;margin:4px 0}
+  .cite{display:inline-block;font-size:11px;color:var(--green);background:var(--green-bg);padding:1px 6px;border-radius:5px;margin:0 2px;vertical-align:super}
+  .cite.pb{color:var(--blue);background:var(--blue-bg)}
+  .refs{margin-top:14px;border-top:1px solid var(--border);padding-top:10px}
+  .refs .h{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}
+  .refs .item{font-size:12px;color:var(--muted);padding:4px 0;display:flex;gap:8px;align-items:center}
+  .badge{font-size:10px;padding:1px 6px;border-radius:4px;color:#fff;flex-shrink:0}
+  .badge.pv{background:var(--green)} .badge.pb{background:var(--blue)}
+  .input{display:flex;gap:10px;padding:16px;border-top:1px solid var(--border);background:#fff;flex-shrink:0}
+  .input input{flex:1;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none}
+  .input button{padding:0 22px;background:var(--green);color:#fff;border:none;border-radius:10px;font-size:14px;cursor:pointer;font-weight:600}
+  .placeholder{color:#9aa3ad;font-size:13px;text-align:center;padding:60px 0}
+  table.files{width:100%;border-collapse:collapse;font-size:13px}
+  table.files th,table.files td{border-bottom:1px solid var(--border);padding:9px 10px;text-align:left}
+  table.files th{color:var(--muted);font-weight:600}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span>语文教学 RAG 助手</div>
+    <div class="api">✓ DeepSeek API 已配置</div>
+
+    <div>
+      <div class="sec">知识库统计</div>
+      <div class="card">
+        <div class="row"><span><span class="tag pv">私有</span> 私有知识库</span><span class="num">128</span></div>
+        <div class="row"><span><span class="tag pb">公共</span> 公共基准库</span><span class="num">456</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec">资料入库</div>
+      <div class="drop">拖入文件到此处<br><b>PDF / TXT / DOCX / DOC</b></div>
+      <div class="switch">
+        <button class="on">🟢 私有知识库</button>
+        <button>🔵 公共基准库</button>
+      </div>
+      <button class="scan">🔍 扫描现有文件</button>
+    </div>
+  </aside>
+
+  <main>
+    <nav class="tabs">
+      <button class="tab active" data-tab="lesson">✍️ 写教案</button>
+      <button class="tab" data-tab="exam">📝 出题</button>
+      <button class="tab" data-tab="qa">💬 答疑</button>
+      <button class="tab" data-tab="analysis">📊 学情分析</button>
+      <button class="tab" data-tab="files">📁 文件管理</button>
+    </nav>
+
+    <div class="chat">
+
+      <!-- 写教案 -->
+      <div class="panel active" id="panel-lesson">
+        <div class="msg user">帮我备《桃花源记》，八年级下，两课时</div>
+        <div class="msg ai">
+          <h3>《桃花源记》教案（八下 · 两课时）</h3>
+          <p>这课主要就抓文言字词那几组：「缘、鲜美、妻子、绝境、无论」。尤其"妻子"这种古今异义，学生年年错，得单独拎出来讲<span class="cite">[1]</span></p>
+          <p><b>重点</b>是字词和背诵，这个跑不掉；<b>难点</b>是"桃花源到底是不是真有"，得让学生想明白作者到底想说什么。</p>
+          <p>⚠️ 老毛病：「妻子」老被当成"老婆"，其实古义是"妻子和儿女"，今年还得压一压<span class="cite">[2]</span></p>
+          <p>第一课时先这么走：</p>
+          <ul>
+            <li>拿"世外桃源"这个成语开头，问学生现在用它啥意思</li>
+            <li>正音、把课文读顺</li>
+            <li>精读第一段，字词过一遍</li>
+          </ul>
+          <p>（第二课时放理解赏析和背诵，先写到这）</p>
+          <div class="refs">
+            <div class="h">📎 引用来源</div>
+            <div class="item"><span class="badge pv">私有</span> 你的教案_桃花源记_2023.docx</div>
+            <div class="item"><span class="badge pv">私有</span> 课堂记录_八下_第3周.md</div>
+            <div class="item"><span class="badge pb">公共</span> 部编版教材_八下_桃花源记.pdf</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 出题 -->
+      <div class="panel" id="panel-exam">
+        <div class="msg user">给《紫藤萝瀑布》出 20 分钟随堂练，重点考象征手法</div>
+        <div class="msg ai">
+          <h3>《紫藤萝瀑布》随堂练（20 分钟）</h3>
+          <p>1. 给加点字注音：迸溅（ ）、伶仃（ ）——送分题<span class="cite">[1]</span></p>
+          <p>2. 关于"象征"，下面哪个理解对？<br>
+          A. 直接写藤萝好看<br>
+          B. 借花写人，由花讲到生命<br>
+          C. 用藤萝比喻个具体东西<br>
+          D. 就是单纯夸春天<span class="cite">[2]</span></p>
+          <p>答案：1. bèng jiàn、líng dīng（一个字 2 分）；2. B（2 分）。</p>
+          <p>选 A/C/D 的基本是把"象征"跟"比喻、直接描写"搞混了——这几个选项就是从学生错答里扒下来的<span class="cite">[2]</span></p>
+          <p>都在"写作手法赏析"这个考点里，不超纲。</p>
+          <div class="refs">
+            <div class="h">📎 引用来源</div>
+            <div class="item"><span class="badge pv">私有</span> 错题_象征手法_2025.xlsx</div>
+            <div class="item"><span class="badge pv">私有</span> 学生作答样本_八下_第5周.docx</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 答疑 -->
+      <div class="panel" id="panel-qa">
+        <div class="msg user">学生问"乃不知有汉"的"乃"是什么意思，我该怎么引导？</div>
+        <div class="msg ai">
+          <h3>启发式引导（别直接给答案）</h3>
+          <p>先让他回忆学过的"乃"，比如《论语》里"去后乃至"那个"乃"，是"才"<span class="cite">[1]</span></p>
+          <p>再问：这里"乃"要是当"于是、就"讲，通不通？换成"竟然"呢？让他自己比一比，哪种更配得上"桃花源里人不知道外面改朝换代"那股惊讶劲。</p>
+          <p>最后让他自己下结论，你补一句就行：这里"乃"是"竟然"，表出乎意料。</p>
+          <div class="refs">
+            <div class="h">📎 引用来源</div>
+            <div class="item"><span class="badge pv">私有</span> 你的课堂例句_文言虚词_乃.docx</div>
+            <div class="item"><span class="badge pb">公共</span> 文言文版_虚词解析.pdf</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 学情分析 -->
+      <div class="panel" id="panel-analysis">
+        <div class="msg user">分析《桃花源记》这一课学生的整体薄弱点</div>
+        <div class="msg ai">
+          <h3>《桃花源记》学情分析</h3>
+          <p><b>高频错的：</b>「妻子」翻译成"老婆"的，这班得有六成<span class="cite">[1]</span></p>
+          <p><b>容易混的：</b>「绝境」的"境"跟"与世隔绝"的"境"分不清；"不足为外人道也"的"为"读几声、啥意思，也老分歧<span class="cite">[2]</span></p>
+          <p><b>共性问题：</b>不少学生把"世外桃源"当成了真的"躲进山里过日子"，没 get 到那层理想色彩。</p>
+          <p><b>建议：</b>古今异义（妻子、绝境）重点讲；再配一道对比阅读，把"桃源理想"和"避世现实"掰开。</p>
+          <div class="refs">
+            <div class="h">📎 引用来源</div>
+            <div class="item"><span class="badge pv">私有</span> 错题_桃花源记_2025.xlsx</div>
+            <div class="item"><span class="badge pv">私有</span> 课堂记录_八下_第3周.md</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 文件管理 -->
+      <div class="panel" id="panel-files">
+        <div class="msg ai">
+          <h3>文件管理</h3>
+          <table class="files">
+            <tr><th>文件名</th><th>库</th><th>文档类型</th><th>状态</th></tr>
+            <tr><td>你的教案_桃花源记_2023.docx</td><td>🟢 私有</td><td>教案</td><td>已入库</td></tr>
+            <tr><td>课堂记录_八下_第3周.md</td><td>🟢 私有</td><td>课堂笔记</td><td>已入库</td></tr>
+            <tr><td>错题_象征手法_2025.xlsx</td><td>🟢 私有</td><td>错题</td><td>已入库</td></tr>
+            <tr><td>部编版教材_八下_桃花源记.pdf</td><td>🔵 公共</td><td>教材</td><td>已入库</td></tr>
+            <tr><td>文言文版_虚词解析.pdf</td><td>🔵 公共</td><td>文言选本</td><td>已入库</td></tr>
+            <tr><td>扫描版_板书_未处理.pdf</td><td>—</td><td>—</td><td>跳过（需 OCR）</td></tr>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="input">
+      <input placeholder="输入你的需求，例如：帮我备《桃花源记》，八年级下，两课时">
+      <button>发送</button>
+    </div>
+  </main>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('.tab');
+  const panels = {
+    lesson: document.getElementById('panel-lesson'),
+    exam: document.getElementById('panel-exam'),
+    qa: document.getElementById('panel-qa'),
+    analysis: document.getElementById('panel-analysis'),
+    files: document.getElementById('panel-files')
+  };
+  tabs.forEach(t => {
+    t.addEventListener('click', () => {
+      tabs.forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      Object.values(panels).forEach(p => p.classList.remove('active'));
+      panels[t.dataset.tab].classList.add('active');
+    });
+  });
+  document.querySelectorAll('.switch button').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.switch button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+    });
+  });
+</script>
+</body>
+</html>
