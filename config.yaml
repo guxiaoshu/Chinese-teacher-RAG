@@ -62,8 +62,8 @@ tagging:
 
 llm:
   base_url: https://api.deepseek.com
-  chat_model: deepseek-chat        # 快：分类 / 切片边界 / 答疑 / 出题结构化输出
-  reason_model: deepseek-reasoner  # 慢但推理强：写教案
+  chat_model: deepseek-v4-flash        # 快：分类 / 切片边界 / 答疑 / 出题结构化输出
+  reason_model: deepseek-v4-pro  # 慢但推理强：写教案
   temperature: 0.2
   max_retries: 3
 
