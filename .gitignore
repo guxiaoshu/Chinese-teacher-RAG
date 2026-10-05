@@ -1,9 +1,8 @@
 # 密钥与本地环境
 .env
 
-# 运行时产物（向量库、状态库不入库；data/ 下的评测集等数据文件可以提交）
-data/chroma/
-data/ingest_state.db
+# 运行时产物
+data/
 __pycache__/
 *.pyc
 .venv/

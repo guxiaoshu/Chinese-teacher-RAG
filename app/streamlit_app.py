@@ -1,15 +1,7 @@
 from __future__ import annotations
 
-import faulthandler
-import os
 import sys
 from pathlib import Path
-
-# 段错误时打印 Python/C 调用栈，便于定位原生层崩溃
-faulthandler.enable()
-# Windows 上 torch 的 OpenMP 运行时可能与 numpy/pyarrow 冲突导致段错误，先规避
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
@@ -164,13 +156,4 @@ with tab5:
         cols = ["path", "library", "status", "doc_type", "chunk_count", "processed_at", "error"]
         df = df[[c for c in cols if c in df.columns]]
         df.columns = ["文件路径", "库", "状态", "类型", "切片数", "入库时间", "错误"] if len(df.columns) == 7 else df.columns
-        # 用 markdown 表格渲染，绕开 st.dataframe 的 pyarrow 转换
-        # （pyarrow 24 + numpy 2.3 在 Streamlit 脚本线程里会卡死/段错误）
-        def _cell(v):
-            return str("" if v is None else v).replace("|", "\\|").replace("\n", " ")
-        header = list(df.columns)
-        st.markdown("\n".join(
-            ["| " + " | ".join(map(_cell, header)) + " |",
-             "|" + "---|" * len(header)]
-            + ["| " + " | ".join(_cell(v) for v in row) + " |" for row in df.itertuples(index=False)]
-        ))
+        st.dataframe(df, use_container_width=True, height=400)

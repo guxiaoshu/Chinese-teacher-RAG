@@ -40,7 +40,6 @@ tagging:
     - 习题
     - 学生作答样本
     - 文言笔记
-    - 文言原著
     - 作文材料
     - 其他
 
@@ -81,14 +80,6 @@ retrieval:
   rrf_k: 60           # RRF 融合参数
   private_weight: 1.2 # 私有库在最终排序中的加权（>1 表示私有优先）
   authority_boost: 0.15  # 每个权威权重档位在分数上的加成系数
-
-rerank:
-  enabled: true                       # 是否启用 cross-encoder 重排
-  model_name: BAAI/bge-reranker-v2-m3 # 重排模型
-  device: auto
-  top_n: 12                           # 每个库进入重排的候选数量
-  batch_size: 16
-  max_length: 512
 
 chunking:
   max_chunk_chars: 1200   # 兜底切片的块大小

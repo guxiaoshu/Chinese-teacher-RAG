@@ -1,33 +1,33 @@
-# 核心 RAG 框架
+核心 RAG 框架
 langchain>=0.3.0
 langchain-core>=0.3.0
 langchain-openai>=0.2.0
 langchain-community>=0.3.0
 langchain-text-splitters>=0.3.0
 
-# 向量库
+向量库
 chromadb>=0.5.0
 
-# Embedding（本地 BGE，直接用 transformers 跑，绕开 sentence-transformers 的 encode 兼容 bug）
-# 注意：torch 默认从 PyPI 装的是 CPU 版。要启用 NVIDIA GPU，请先单独执行：
-#  pip install torch --index-url https://download.pytorch.org/whl/cu128
-# 再装其余依赖。
+Embedding（本地 BGE，直接用 transformers 跑，绕开 sentence-transformers 的 encode 兼容 bug）
+注意：torch 默认从 PyPI 装的是 CPU 版。要启用 NVIDIA GPU，请先单独执行：
+ pip install torch --index-url https://download.pytorch.org/whl/cu128
+再装其余依赖。
 transformers>=4.46.0
-# torch 由 transformers 自动带入，如需 GPU 参考上面注释单独安装
+torch 由 transformers 自动带入，如需 GPU 参考上面注释单独安装
 
-# 文档解析
+文档解析
 pypdf>=4.0.0
 python-docx>=1.1.0
 pywin32>=306        # 用于 .doc（老格式）通过 Word/WPS COM 转换
 
-# 检索
+检索
 jieba>=0.42.1
 rank-bm25>=0.2.2
 
-# 配置 / 文件监听
+配置 / 文件监听
 PyYAML>=6.0
 python-dotenv>=1.0.0
 watchdog>=4.0.0
 
-# 前端
+ 前端
 streamlit>=1.35.0

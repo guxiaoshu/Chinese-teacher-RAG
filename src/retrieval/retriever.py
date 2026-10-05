@@ -8,7 +8,6 @@ from rank_bm25 import BM25Okapi
 
 from ..config import CONFIG, authority_weight_map
 from ..llm.embeddings import embed_query
-from ..llm.reranker import available as rerank_available, rerank as rerank_docs
 from ..vectorstore.store import LIBRARY_COLLECTION, get_all_documents, get_collection
 from .query_rewrite import rewrite_query
 
@@ -104,10 +103,6 @@ def _rrf(rankings: list[list[str]], k: int) -> list[tuple[str, float]]:
             scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
     return sorted(scores.items(), key=lambda x: -x[1])
 
-def _authority_bonus(meta: dict) -> float:
-    authority = meta.get("authority", "其他")
-    return _AUTHORITY.get(authority, 1) * _R["authority_boost"]
-
 def _retrieve_single(library: str, query: str, filters: dict | None, top_k: int) -> list[RetrievedDoc]:
     n = max(top_k, _R["bm25_top_k"], _R["private_top_k"], _R["public_top_k"])
     vec_ids = _vector_rank(library, query, filters, n)
@@ -125,34 +120,21 @@ def _retrieve_single(library: str, query: str, filters: dict | None, top_k: int)
             continue
         meta = idx["metas"][pos]
         text = idx["texts"][pos]
+        authority = meta.get("authority", "其他")
+        weight = _AUTHORITY.get(authority, 1)
+        final_score = rrf_score + weight * _R["authority_boost"]
         results.append(RetrievedDoc(
             text=text,
             meta=meta,
-            score=rrf_score + _authority_bonus(meta),
+            score=final_score,
             library=library,
             source_file=meta.get("source_file", ""),
             doc_type=meta.get("doc_type", ""),
             chunk_id=doc_id,
         ))
-    results.sort(key=lambda d: -d.score)
-
-    # cross-encoder 重排：BM25+向量负责召回（RRF 取候选池），重排模型负责精排
-    rcfg = CONFIG.get("rerank", {})
-    if rcfg.get("enabled", True):
-        pool = max(top_k, int(rcfg.get("top_n", top_k * 3)))
-        cands = results[:pool]
-        if len(cands) > 1:
-            try:
-                if rerank_available():
-                    rs = rerank_docs(query, [d.text for d in cands])
-                    if len(rs) == len(cands) and any(s != 0 for s in rs):
-                        for d, s in zip(cands, rs):
-                            d.score = s + _authority_bonus(d.meta)
-                        cands.sort(key=lambda d: -d.score)
-                        results = cands
-            except Exception:
-                pass
-    return results[:top_k]
+        if len(results) >= top_k:
+            break
+    return results
 
 def retrieve(query: str, library: str | None = None, filters: dict | None = None,
              top_k: int | None = None, rewrite: bool = True) -> list[RetrievedDoc]:

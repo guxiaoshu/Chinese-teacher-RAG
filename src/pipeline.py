@@ -46,8 +46,6 @@ def _authority_for(tags, chunk_meta: dict) -> str:
         return "学生作答"
     if dt == "文言笔记":
         return "教参"
-    if dt == "文言原著":
-        return "教材"
     if dt == "习题":
         return "其他"
     return "其他"

@@ -6,11 +6,9 @@ from pathlib import Path
 
 from ..config import PRIVATE_DIR, PUBLIC_DIR
 from .loader import is_supported
-from watchdog.events import FileSystemEventHandler
 
-class _IngestHandler(FileSystemEventHandler):
+class _IngestHandler:
     def __init__(self, process_file, delay: float = 1.0, retries: int = 5):
-        super().__init__()
         self._process = process_file
         self._delay = delay
         self._retries = retries
