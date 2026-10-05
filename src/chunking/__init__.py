@@ -4,6 +4,7 @@ from .base import Chunk, split_by_headings, fallback_split
 from .lesson_plan import LessonPlanChunker
 from .wrong_answer import WrongAnswerChunker
 from .classical import ClassicalChunker
+from .classical_text import ClassicalTextChunker
 from .composition import CompositionChunker
 
 _CHUNKERS = {
@@ -13,6 +14,7 @@ _CHUNKERS = {
     "学生作答样本": WrongAnswerChunker(),
     "习题": WrongAnswerChunker(),
     "文言笔记": ClassicalChunker(),
+    "文言原著": ClassicalTextChunker(),
     "作文材料": CompositionChunker(),
 }
 
