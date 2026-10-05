@@ -25,13 +25,13 @@ def _is_relevant(doc, item: dict) -> bool:
     article = doc.meta.get("article", "") or ""
     return any(k in source or k in article for k in expected)
 
-def _eval_once(queries: list[dict], k: int, rewrite: bool) -> dict:
+def _eval_once(queries: list[dict], k: int, rewrite: bool, library: str | None) -> dict:
     recall_hits = 0
     mrr_total = 0.0
     details: list[dict] = []
     for item in queries:
         q = item["query"]
-        docs = retrieve(q, library="public", top_k=k, rewrite=rewrite)
+        docs = retrieve(q, library=library, top_k=k, rewrite=rewrite)
         rank = None
         for i, d in enumerate(docs, 1):
             if _is_relevant(d, item):
@@ -61,17 +61,20 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--on", action="store_true", help="只跑改写开启")
     ap.add_argument("--off", action="store_true", help="只跑改写关闭")
+    ap.add_argument("--library", default="public", choices=["public", "private", "both"],
+                    help="评测哪个库（public/private/both，both=双库合并）")
     args = ap.parse_args()
 
+    library = None if args.library == "both" else args.library
     k, queries = load_eval()
-    print(f"评估集共 {len(queries)} 条，k={k}")
+    print(f"评估集共 {len(queries)} 条，k={k}，库={args.library}")
 
     if args.on or args.off:
         rewrite = args.on
-        _print(_eval_once(queries, k, rewrite), "Query 改写 开启" if rewrite else "Query 改写 关闭", k)
+        _print(_eval_once(queries, k, rewrite, library), "Query 改写 开启" if rewrite else "Query 改写 关闭", k)
     else:
-        off = _eval_once(queries, k, rewrite=False)
-        on = _eval_once(queries, k, rewrite=True)
+        off = _eval_once(queries, k, rewrite=False, library=library)
+        on = _eval_once(queries, k, rewrite=True, library=library)
         _print(off, "Query 改写 关闭", k)
         _print(on, "Query 改写 开启", k)
         print("\n--- 改写带来的变化 ---")
