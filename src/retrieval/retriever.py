@@ -28,7 +28,8 @@ class RetrievedDoc:
     chunk_id: str = ""
 
     def source_label(self) -> str:
-        lib = "私有知识库" if self.library == "private" else "公共基准库"
+        labels = {"private": "私有知识库", "public": "公共基准库", "composition": "作文库"}
+        lib = labels.get(self.library, "知识库")
         return f"【{lib}】{self.source_file}"
 
 def _tokenize(text: str) -> list[str]:
@@ -55,11 +56,13 @@ def _ensure_index(library: str) -> dict:
 def _to_where(filters: dict | None) -> dict | None:
     if not filters:
         return None
-    where = {}
-    for k, v in filters.items():
-        if v not in (None, ""):
-            where[k] = {"$eq": str(v)}
-    return where or None
+    conds = [{k: {"$eq": str(v)}} for k, v in filters.items() if v not in (None, "")]
+    if not conds:
+        return None
+    if len(conds) == 1:
+        return conds[0]
+    # chroma 顶层 where 只能有一个操作符，多字段过滤用 $and 包裹
+    return {"$and": conds}
 
 def _matches(meta: dict, filters: dict | None) -> bool:
     if not filters:
@@ -144,7 +147,7 @@ def retrieve(query: str, library: str | None = None, filters: dict | None = None
     if rewrite:
         query = rewrite_query(query)
 
-    if library in ("private", "public"):
+    if library in ("private", "public", "composition"):
         k = top_k or (_R["private_top_k"] if library == "private" else _R["public_top_k"])
         return _retrieve_single(library, query, filters, k)
 

@@ -4,7 +4,7 @@ import json
 
 from ..config import CHROMA_DIR
 
-LIBRARY_COLLECTION = {"public": "public_base", "private": "private_kb"}
+LIBRARY_COLLECTION = {"public": "public_base", "private": "private_kb", "composition": "composition_kb"}
 
 _client = None
 _collections: dict[str, object] = {}

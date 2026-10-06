@@ -24,8 +24,9 @@ DB_PATH = BASE_DIR / CONFIG["paths"]["sqlite_db"]
 INGEST_DIR = BASE_DIR / CONFIG["paths"]["ingest_dir"]
 PRIVATE_DIR = INGEST_DIR / "private"
 PUBLIC_DIR = INGEST_DIR / "public"
+COMPOSITION_DIR = INGEST_DIR / "composition"
 
-for _d in (DATA_DIR, CHROMA_DIR, INGEST_DIR, PRIVATE_DIR, PUBLIC_DIR):
+for _d in (DATA_DIR, CHROMA_DIR, INGEST_DIR, PRIVATE_DIR, PUBLIC_DIR, COMPOSITION_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
@@ -45,6 +46,9 @@ def allowed_doc_types() -> list[str]:
 
 def allowed_grades() -> list[str]:
     return CONFIG["tagging"]["grades"]
+
+def allowed_levels() -> list[str]:
+    return ["A", "B", "C", "D", "E"]
 
 def allowed_knowledge_points() -> list[str]:
     return CONFIG["tagging"]["knowledge_points"]
