@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 from ..config import api_key_ready
 from ..llm.deepseek import get_chat_llm
 
@@ -12,10 +14,8 @@ _SYSTEM = """你是中学语文检索查询改写器。把老师或学生的口�
 4. 只补关键检索信息，不要展开成完整问题，不要无中生有（不确定篇目不要硬加）。
 5. 输出一句改写后的检索短语（中文），不要引号、不要解释、不要多余文字。"""
 
-def rewrite_query(query: str) -> str:
-    q = (query or "").strip()
-    if not q or not api_key_ready():
-        return query
+@lru_cache(maxsize=1024)
+def _rewrite_cached(q: str) -> str:
     try:
         llm = get_chat_llm(temperature=0.0)
         resp = llm.invoke([
@@ -25,6 +25,13 @@ def rewrite_query(query: str) -> str:
         out = (resp.content or "").strip()
         if 2 <= len(out) <= max(len(q) * 4, 60):
             return out
-        return query
+        return q
     except Exception:
+        return q
+
+
+def rewrite_query(query: str) -> str:
+    q = (query or "").strip()
+    if not q or not api_key_ready():
         return query
+    return _rewrite_cached(q)

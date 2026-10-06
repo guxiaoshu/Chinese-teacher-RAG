@@ -122,7 +122,11 @@ def _retrieve_single(library: str, query: str, filters: dict | None, top_k: int)
         text = idx["texts"][pos]
         authority = meta.get("authority", "其他")
         weight = _AUTHORITY.get(authority, 1)
-        final_score = rrf_score + weight * _R["authority_boost"]
+        # AI 自动沉淀的内容（generated=True）一律按最低权威，避免"模型读自己上次输出"的自我强化
+        if meta.get("generated"):
+            weight = 1
+        # 权威作为相对加成乘到 RRF 分数上，只微调排序、不盖过相关性
+        final_score = rrf_score * (1 + (weight - 1) * _R["authority_boost"])
         results.append(RetrievedDoc(
             text=text,
             meta=meta,
@@ -132,9 +136,8 @@ def _retrieve_single(library: str, query: str, filters: dict | None, top_k: int)
             doc_type=meta.get("doc_type", ""),
             chunk_id=doc_id,
         ))
-        if len(results) >= top_k:
-            break
-    return results
+    results.sort(key=lambda d: -d.score)
+    return results[:top_k]
 
 def retrieve(query: str, library: str | None = None, filters: dict | None = None,
              top_k: int | None = None, rewrite: bool = True) -> list[RetrievedDoc]:
@@ -149,4 +152,9 @@ def retrieve(query: str, library: str | None = None, filters: dict | None = None
     k_pub = _R["public_top_k"]
     priv = _retrieve_single("private", query, filters, k_priv)
     pub = _retrieve_single("public", query, filters, k_pub)
-    return priv + pub
+    # 私有库加权后与公共库合并排序（private_weight > 1 表示私有优先）
+    pw = float(_R.get("private_weight", 1.0))
+    for d in priv:
+        d.score *= pw
+    merged = sorted(priv + pub, key=lambda d: -d.score)
+    return merged[:top_k] if top_k else merged

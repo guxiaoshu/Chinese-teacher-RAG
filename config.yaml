@@ -80,11 +80,11 @@ retrieval:
   bm25_top_k: 8       # 关键词召回条数（每个库）
   rrf_k: 60           # RRF 融合参数
   private_weight: 1.2 # 私有库在最终排序中的加权（>1 表示私有优先）
-  authority_boost: 0.15  # 每个权威权重档位在分数上的加成系数
+  authority_boost: 0.15  # 权威相对加成系数：final = rrf * (1 + (权重-1)*系数)，1~5 档约放大 1.0~1.6 倍
 
 chunking:
-  max_chunk_chars: 1200   # 兜底切片的块大小
-  overlap_chars: 120      # 兜底切片重叠
+  max_chunk_chars: 450   # 兜底切片的块大小（对齐 bge-base-zh 512 token 上限，避免向量被截断/稀释）
+  overlap_chars: 80      # 兜底切片重叠
 
 ingestion:
   auto_save_generated: true   # 四大场景生成结果自动回库（沉淀进私有知识库）

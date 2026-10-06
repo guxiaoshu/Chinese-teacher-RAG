@@ -44,12 +44,16 @@ def _flatten_meta(meta: dict) -> dict:
 def upsert_chunks(library: str, ids: list[str], texts: list[str],
                   embeddings: list[list[float]], metas: list[dict]) -> None:
     col = get_collection(library)
-    col.upsert(
-        ids=ids,
-        documents=texts,
-        embeddings=embeddings,
-        metadatas=[_flatten_meta(m) for m in metas],
-    )
+    flat_metas = [_flatten_meta(m) for m in metas]
+    # chroma 单次 upsert 有上限（约 5461），大文件（如资治通鉴近万切片）分批写入
+    batch = 5000
+    for i in range(0, len(ids), batch):
+        col.upsert(
+            ids=ids[i : i + batch],
+            documents=texts[i : i + batch],
+            embeddings=embeddings[i : i + batch],
+            metadatas=flat_metas[i : i + batch],
+        )
 
 def delete_by_source_hash(library: str, source_hash: str) -> None:
     col = get_collection(library)
