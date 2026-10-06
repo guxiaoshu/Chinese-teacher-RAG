@@ -28,8 +28,14 @@ def _load():
                 except Exception:
                     pass
                 _device = "cuda" if torch.cuda.is_available() else "cpu"
-                _tokenizer = AutoTokenizer.from_pretrained(_MODEL_NAME)
-                _model = AutoModel.from_pretrained(_MODEL_NAME).to(_device)
+                # 优先离线读本地缓存，避免每次启动先联网探测（离线环境会卡几秒）；缓存缺失才联网下载
+                try:
+                    _tokenizer = AutoTokenizer.from_pretrained(_MODEL_NAME, local_files_only=True)
+                    _model = AutoModel.from_pretrained(_MODEL_NAME, local_files_only=True)
+                except Exception:
+                    _tokenizer = AutoTokenizer.from_pretrained(_MODEL_NAME)
+                    _model = AutoModel.from_pretrained(_MODEL_NAME)
+                _model = _model.to(_device)
                 _model.eval()
                 _enc = _tokenizer(["预热"], padding=True, truncation=True, return_tensors="pt")
                 _enc = {k: v.to(_device) for k, v in _enc.items()}

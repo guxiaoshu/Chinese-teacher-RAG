@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+:root {
+  --color-primary: #8b4513;
+  --color-secondary: #d4a574;
+  --color-accent: #c41e3a;
+  --color-background: #faf8f5;
+  --color-text: #2c1810;
+  --color-border: #d4c5b5;
+}
+
+body {
+  font-family: 'Noto Serif SC', 'Source Han Serif SC', serif;
+  background-color: var(--color-background);
+  color: var(--color-text);
+  margin: 0;
+}
+
+/* Animation for toast notifications */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-secondary);
+}
