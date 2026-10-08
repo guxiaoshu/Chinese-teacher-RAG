@@ -25,8 +25,17 @@ INGEST_DIR = BASE_DIR / CONFIG["paths"]["ingest_dir"]
 PRIVATE_DIR = INGEST_DIR / "private"
 PUBLIC_DIR = INGEST_DIR / "public"
 COMPOSITION_DIR = INGEST_DIR / "composition"
+TEMPLATES_DIR = BASE_DIR / CONFIG["paths"]["templates_dir"]
 
-for _d in (DATA_DIR, CHROMA_DIR, INGEST_DIR, PRIVATE_DIR, PUBLIC_DIR, COMPOSITION_DIR):
+def _resolve_path(p: str) -> Path:
+    path = Path(p)
+    return path if path.is_absolute() else BASE_DIR / path
+
+PPT_OUTPUT_DIR = _resolve_path(CONFIG["paths"]["ppt_output_dir"])
+
+TEMPLATE_SLOTS = [1, 2, 3, 4, 5]
+
+for _d in (DATA_DIR, CHROMA_DIR, INGEST_DIR, PRIVATE_DIR, PUBLIC_DIR, COMPOSITION_DIR, TEMPLATES_DIR, PPT_OUTPUT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()

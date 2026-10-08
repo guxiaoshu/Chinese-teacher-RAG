@@ -20,6 +20,9 @@ pypdf>=4.0.0
 python-docx>=1.1.0
 pywin32>=306        # 用于 .doc（老格式）通过 Word/WPS COM 转换
 
+PPT 生成
+python-pptx>=0.6.23
+
 检索
 jieba>=0.42.1
 rank-bm25>=0.2.2

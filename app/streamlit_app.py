@@ -10,7 +10,7 @@ if str(_ROOT) not in sys.path:
 
 import streamlit as st
 
-from src.config import PRIVATE_DIR, PUBLIC_DIR, COMPOSITION_DIR, api_key_ready, CONFIG, BASE_DIR, allowed_doc_types, allowed_grades
+from src.config import PRIVATE_DIR, PUBLIC_DIR, COMPOSITION_DIR, api_key_ready, CONFIG, BASE_DIR, allowed_doc_types, allowed_grades, TEMPLATE_SLOTS, PPT_OUTPUT_DIR
 from src.chunking import chunk_for
 from src.ingestion.loader import extract_text
 from src.ingestion.composition import import_reference
@@ -20,7 +20,8 @@ from src.vectorstore.store import count_documents
 from src.retrieval.retriever import rebuild_index
 from src.llm.embeddings import embed_query
 from src.pipeline import process_file
-from src.chains import lesson_plan, exam, qa, learning_analysis, essay
+from src.chains import lesson_plan, exam, qa, learning_analysis, essay, ppt
+from src.ppt import engine
 
 st.set_page_config(page_title="语文教学 RAG 助手", page_icon="📚", layout="wide")
 
@@ -140,7 +141,7 @@ with st.sidebar:
 
     st.caption("也可以直接把文件拖进项目里的 `ingest/private` 或 `ingest/public` 文件夹，会自动入库。")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["✍️ 写教案", "📝 出题", "💬 答疑", "📊 学情分析", "🖊 作文批改", "🗂 文件管理", "🔬 切分调试"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["✍️ 写教案", "📝 出题", "💬 答疑", "📊 学情分析", "🖊 作文批改", "📽 生成 PPT", "🗂 文件管理", "🔬 切分调试"])
 
 with tab1:
     st.header("针对性备课")
@@ -261,6 +262,84 @@ with tab5:
             tmp.unlink(missing_ok=True)
 
 with tab6:
+    st.header("📽 生成 PPT")
+    st.caption("上传 PPT 模板到 5 个槽位 → 输入主题 → 检索教案资料 → 生成可直接下载的 .pptx（直接套模板 / 仿风格重建）")
+
+    names = engine.slot_names()
+
+    gen_col, slot_col = st.columns([1.2, 1])
+    with gen_col:
+        q = st.text_area("课件主题", placeholder="例如：帮我做《桃花源记》第一课时的课件，两课时", key="ppt_q")
+        slot_labels = ["不使用模板"] + [f"槽位 {s}（{names.get(str(s), '空')}）" for s in TEMPLATE_SLOTS]
+        slot_choice = st.selectbox("选择模板槽位", slot_labels, key="ppt_slot")
+        mode = st.radio(
+            "生成方式", ["仿风格重新做", "直接套模板"], horizontal=True, key="ppt_mode",
+            help="直接套=把内容填进模板自带的封面+内容页；仿风格=抽取模板配色/字体，重建标准版式新课件",
+        )
+        out_dir = st.text_input(
+            "输出文件夹", value=str(PPT_OUTPUT_DIR), key="ppt_outdir",
+            help="生成的 .pptx 存这里；可填绝对路径如 D:\\我的PPT，或相对项目路径；文件夹不存在会自动创建",
+        )
+        if st.button("生成 PPT", type="primary", key="ppt_btn"):
+            if not api_key_ready():
+                st.error("请先在 .env 填写真实 API key")
+            elif not (q or "").strip():
+                st.warning("请先填写课件主题")
+            else:
+                slot = None
+                if slot_choice != "不使用模板":
+                    slot = TEMPLATE_SLOTS[slot_labels.index(slot_choice) - 1]
+                m = "fill" if mode == "直接套模板" else "style"
+                if m == "fill" and slot is None:
+                    st.error("「直接套」需要先选择一个已放模板的槽位")
+                elif m == "fill" and not engine.slot_filled(slot):
+                    st.error("所选槽位还没有模板，请先在右侧上传，或改用「仿风格」")
+                else:
+                    with st.spinner("检索资料 + 生成课件中…"):
+                        try:
+                            res = ppt.run(q, template_slot=slot, mode=m, output_dir=out_dir)
+                        except Exception as e:
+                            st.error(f"生成失败：{e}")
+                            res = None
+                    if res:
+                        d = res.data or {}
+                        st.success(f"✅ 已生成 {d.get('slides', 0)} 页内容 + 封面，存于 {d.get('path', '')}")
+                        st.download_button(
+                            "⬇️ 下载 PPT 文件",
+                            data=Path(d["path"]).read_bytes(),
+                            file_name=d["filename"],
+                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                            key="ppt_dl",
+                        )
+                        st.markdown(res.content)
+                        _render_citations(res.citations)
+
+    with slot_col:
+        st.subheader("🗂 模板槽位（5 个）")
+        st.caption("每个槽位放一个 .pptx 模板，上传即覆盖；「直接套」用它的封面+内容页")
+        for s in TEMPLATE_SLOTS:
+            filled = engine.slot_filled(s)
+            name = names.get(str(s), "")
+            st.markdown(f"**槽位 {s}** — {'✅ 已放：' + name if filled else '⬜ 空'}")
+            up = st.file_uploader(f"上传到槽位 {s}", type=["pptx"], key=f"ppt_slot_{s}", label_visibility="collapsed")
+            if up is not None:
+                try:
+                    engine.save_slot(s, up.getvalue(), up.name)
+                    st.success(f"已保存到槽位 {s}：{up.name}")
+                except Exception as e:
+                    st.error(f"保存失败：{e}")
+        st.divider()
+        sample_slot = st.selectbox("生成示例模板到槽位", [str(s) for s in TEMPLATE_SLOTS], key="ppt_sample_slot")
+        if st.button("生成示例模板", key="ppt_sample_btn"):
+            p = engine.slot_path(int(sample_slot))
+            try:
+                engine.make_sample_template(p)
+                engine.save_slot(int(sample_slot), p.read_bytes(), f"示例模板-槽位{sample_slot}.pptx")
+                st.success(f"已生成示例模板到槽位 {sample_slot}")
+            except Exception as e:
+                st.error(f"生成失败：{e}")
+
+with tab7:
     st.header("文件管理")
     rows = list_files()
     if not rows:
@@ -274,7 +353,7 @@ with tab6:
         df.columns = ["文件路径", "库", "状态", "类型", "切片数", "入库时间", "错误"] if len(df.columns) == 7 else df.columns
         st.dataframe(df, use_container_width=True, height=400)
 
-with tab7:
+with tab8:
     st.header("🔬 切分调试")
     st.caption("挑一个文件、调整切分参数，实时预览切片效果；确认后再写回 config.yaml。")
 

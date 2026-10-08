@@ -94,3 +94,5 @@ paths:
   chroma_dir: data/chroma
   sqlite_db: data/ingest_state.db
   ingest_dir: ingest
+  templates_dir: templates
+  ppt_output_dir: data/ppt_output   # 生成的 PPT 输出目录（可填绝对路径，如 D:\我的PPT）
