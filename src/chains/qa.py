@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..retrieval.retriever import retrieve
 from ..llm.deepseek import get_chat_llm
 from ..ingestion.generated import save_generated
-from .common import ChainResult, build_context
+from .common import ChainResult, build_context, with_memory
 
 _SYSTEM = """你是老师私人的语文教学答疑助手。为学生答疑时以启发式为主，不直接输出完整答案。
 
@@ -14,15 +14,16 @@ _SYSTEM = """你是老师私人的语文教学答疑助手。为学生答疑时�
 4. 语气像老师本人，沿用其教学话术。
 """
 
-def run(query: str) -> ChainResult:
+def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
     docs = retrieve(query)
     ctx, citations = build_context(docs)
-    user = f"学生/老师的问题：{query}\n\n可参考的老师过往资料：\n{ctx}"
+    user = with_memory(f"学生/老师的问题：{query}\n\n可参考的老师过往资料：\n{ctx}", memory)
     llm = get_chat_llm()
     resp = llm.invoke([
         {"role": "system", "content": _SYSTEM},
         {"role": "user", "content": user},
     ])
     content = resp.content
-    save_generated("答疑", query, content)
+    if save:
+        save_generated("答疑", query, content)
     return ChainResult(content=content, citations=citations)

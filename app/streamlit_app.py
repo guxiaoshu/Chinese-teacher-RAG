@@ -10,10 +10,11 @@ if str(_ROOT) not in sys.path:
 
 import streamlit as st
 
-from src.config import PRIVATE_DIR, PUBLIC_DIR, COMPOSITION_DIR, api_key_ready, CONFIG, BASE_DIR, allowed_doc_types, allowed_grades, TEMPLATE_SLOTS, PPT_OUTPUT_DIR
+from src.config import PRIVATE_DIR, PUBLIC_DIR, COMPOSITION_DIR, api_key_ready, CONFIG, BASE_DIR, allowed_doc_types, allowed_grades, PPT_OUTPUT_DIR
 from src.chunking import chunk_for
 from src.ingestion.loader import extract_text
 from src.ingestion.composition import import_reference
+from src.ingestion.generated import preview_generated_chunks, save_generated_selected
 from src.ingestion.state import init_db, list_files, count_by_library
 from src.ingestion.watcher import IngestWatcher, scan_existing
 from src.vectorstore.store import count_documents
@@ -21,7 +22,7 @@ from src.retrieval.retriever import rebuild_index
 from src.llm.embeddings import embed_query
 from src.pipeline import process_file
 from src.chains import lesson_plan, exam, qa, learning_analysis, essay, ppt
-from src.ppt import engine
+from src.memory import load as load_memory, save as save_memory
 
 st.set_page_config(page_title="语文教学 RAG 助手", page_icon="📚", layout="wide")
 
@@ -83,6 +84,43 @@ def _render_citations(citations: list[dict]) -> None:
             lib = {"private": "🟢 私有知识库", "composition": "🟠 作文库"}.get(c["library"], "🔵 公共基准库")
             st.markdown(f"**[{c['index']}]** {lib} · `{c['source_file']}` · {c['doc_type']}")
 
+
+def _chunk_review(scenario: str, query: str, content: str) -> None:
+    """把本次生成内容切成切片，逐片勾选后手动入库私有库。"""
+    info = preview_generated_chunks(scenario, query, content)
+    chunks = info["chunks"]
+    if not chunks:
+        st.caption("（本次内容过短，切不出可入库的切片）")
+        return
+    nonce = info["sha"][:8]
+    with st.expander(
+        f"📥 手动入库：本次切出 {len(chunks)} 片，勾选要存进私有库的切片（默认全选）",
+        expanded=True,
+    ):
+        selected: list[int] = []
+        for c in chunks:
+            ok = st.checkbox(
+                f"切片 {c['index'] + 1}/{len(chunks)} · {len(c['text'])} 字 · {c['text'][:50]}…",
+                value=True, key=f"chk_{scenario}_{nonce}_{c['index']}",
+            )
+            if ok:
+                selected.append(c["index"])
+        if st.button("✅ 入库所选切片", key=f"commit_{scenario}_{nonce}"):
+            if not selected:
+                st.warning("没有勾选任何切片，未入库")
+            else:
+                with st.spinner("正在入库所选切片…"):
+                    ok = save_generated_selected(scenario, query, content, selected)
+                if ok:
+                    st.success(f"✅ 已入库 {len(selected)} 片")
+                else:
+                    st.error("入库失败")
+
+def _current_memory() -> str:
+    """右侧「希望我记住什么？」框当前内容（用于注入生成）。"""
+    return (st.session_state.get("remember_memory_editor") or "").strip()
+
+
 with st.sidebar:
     st.title("📚 语文教学 RAG 助手")
 
@@ -141,59 +179,82 @@ with st.sidebar:
 
     st.caption("也可以直接把文件拖进项目里的 `ingest/private` 或 `ingest/public` 文件夹，会自动入库。")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["✍️ 写教案", "📝 出题", "💬 答疑", "📊 学情分析", "🖊 作文批改", "📽 生成 PPT", "🗂 文件管理", "🔬 切分调试"])
+main_col, mem_col = st.columns([5, 2], gap="large")
+
+with mem_col:
+    st.markdown("#### 🧠 希望我记住什么？")
+    st.caption("写在这里的长期上下文会注入「写教案 / 出题 / 答疑 / 学情分析」的生成；作文批改不读取。改完点「保存」即可长期保留。")
+    st.text_area(
+        "长期记忆",
+        value=load_memory(),
+        key="remember_memory_editor",
+        height=400,
+        label_visibility="collapsed",
+        placeholder="例如：我班是八年级，学生文言文基础偏弱；板书偏好思维导图式；喜欢用生活例子导入；讲古文习惯先疏通字词再品情感。",
+    )
+    if st.button("💾 保存长期记忆", key="remember_save", use_container_width=True):
+        save_memory(st.session_state["remember_memory_editor"])
+        st.toast("✅ 已保存长期记忆")
+        st.rerun()
+
+with main_col:
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["✍️ 写教案", "📝 出题", "💬 答疑", "📊 学情分析", "🖊 作文批改", "📽 生成 PPT", "🗂 文件管理", "🔬 切分调试"])
 
 with tab1:
     st.header("针对性备课")
     st.caption("私有库优先召回你往年同篇教案、课堂记录、学生错题 → 公共库补教材课标 → 迭代出新版教案 + 板书 + 课堂预设")
-    q = st.text_area("备课需求", placeholder="例如：帮我备《桃花源记》，八年级下，两课时", key="lp")
+    q = st.text_area("备课需求", placeholder="例如：帮我备《岳阳楼记》，八年级下册，两课时。优先复用我往年上这篇时的提问和板书框架；这届学生文言虚词「其」「以」易错，写进重难点和课堂预设；结尾给 4~6 个跳出课本的启发式问题链（各标思考角度）。", key="lp")
     if st.button("生成教案", type="primary", key="lp_btn"):
         if not api_key_ready():
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("检索私有库 + 生成教案中（推理模型较慢，请稍候）…"):
-                res = lesson_plan.run(q)
+                res = lesson_plan.run(q, save=False, memory=_current_memory())
             st.markdown(res.content)
             _render_citations(res.citations)
+            _chunk_review("写教案", q, res.content)
 
 with tab2:
     st.header("针对性出题")
     st.caption("薄弱点必须来自私有错题库；选择题干扰项优先参考学生真实错误作答；对标课标不超纲")
-    q = st.text_area("出题需求", placeholder="例如：给《紫藤萝瀑布》出一份 20 分钟随堂练，重点考象征手法", key="exam")
+    q = st.text_area("出题需求", placeholder="例如：给《紫藤萝瀑布》出一份 20 分钟随堂练，重点考象征手法与托物言志。选择题干扰项直接用我班学生真实错过的点（借景抒情与象征混淆）；对标课标不超纲，每道题附评分细则。", key="exam")
     if st.button("生成试题", type="primary", key="exam_btn"):
         if not api_key_ready():
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("检索私有错题库 + 命题中…"):
-                res = exam.run(q)
+                res = exam.run(q, save=False, memory=_current_memory())
             st.markdown(res.content)
             _render_citations(res.citations)
+            _chunk_review("出题", q, res.content)
 
 with tab3:
     st.header("启发式答疑")
     st.caption("优先召回你课堂用过的例子、批注、学生疑问；启发式引导，不直接给完整答案")
-    q = st.text_area("问题", placeholder="例如：学生问《桃花源记》里'乃不知有汉'的'乃'是什么意思，该怎么引导？", key="qa")
+    q = st.text_area("问题", placeholder="例如：学生问《桃花源记》「乃不知有汉」的「乃」怎么理解。我不想直接讲，想用启发式一步步引他自己推出来，借我课堂里讲文言虚词用过的例子和追问方式。", key="qa")
     if st.button("开始答疑", type="primary", key="qa_btn"):
         if not api_key_ready():
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("检索老师过往资料 + 生成启发式回复…"):
-                res = qa.run(q)
+                res = qa.run(q, save=False, memory=_current_memory())
             st.markdown(res.content)
             _render_citations(res.citations)
+            _chunk_review("答疑", q, res.content)
 
 with tab4:
     st.header("学情沉淀")
     st.caption("基于私有错题/作答样本，输出某篇目/单元的高频错误、易混淆点与教学建议（越沉淀越强）")
-    q = st.text_area("学情分析需求", placeholder="例如：分析《桃花源记》这一课学生的整体薄弱点", key="la")
+    q = st.text_area("学情分析需求", placeholder="例如：分析《桃花源记》这一单元学生的整体薄弱点——高频错误、易混淆点、班级共性，并给针对性教学建议，结论尽量对应我错题库里的具体错题。", key="la")
     if st.button("生成学情诊断", type="primary", key="la_btn"):
         if not api_key_ready():
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("分析私有错题中…"):
-                res = learning_analysis.run(q)
+                res = learning_analysis.run(q, save=False, memory=_current_memory())
             st.markdown(res.content)
             _render_citations(res.citations)
+            _chunk_review("学情分析", q, res.content)
 
 with tab5:
     st.header("🖊 作文批改")
@@ -217,6 +278,8 @@ with tab5:
         student = st.text_input("学生姓名/学号", key="essay_student", help="用于检索该生过往作文、追踪写作轨迹")
         topic = st.text_input("作文题目/主题", key="essay_topic", placeholder="如：坚持")
         grade = st.selectbox("学段（可选）", [""] + allowed_grades(), key="essay_grade")
+        save_essay_flag = st.checkbox("批改后存入作文库", value=True, key="save_essay",
+                                      help="勾选=本次作文+评分沉淀进作文库，按学生追踪；不勾=只显示不入库")
         if st.button("开始批改", type="primary", key="essay_btn", use_container_width=True):
             essay_text = st.session_state.get("essay_text", "")
             if not api_key_ready():
@@ -225,7 +288,7 @@ with tab5:
                 st.warning("请先粘贴或上传学生作文")
             else:
                 with st.spinner("检索过往作文 + 批改评分中…"):
-                    res = essay.run(essay_text, student=student, topic=topic, grade=grade)
+                    res = essay.run(essay_text, student=student, topic=topic, grade=grade, save=save_essay_flag)
                 d = res.data or {}
                 m1, m2, m3, m4, m5 = st.columns(5)
                 m1.metric("总分", f"{d.get('total', '—')}/60")
@@ -263,81 +326,50 @@ with tab5:
 
 with tab6:
     st.header("📽 生成 PPT")
-    st.caption("上传 PPT 模板到 5 个槽位 → 输入主题 → 检索教案资料 → 生成可直接下载的 .pptx（直接套模板 / 仿风格重建）")
+    st.caption("输入主题 → 检索教案资料 → 智能设计引擎生成 .pptx：多风格 / 多版式 / AI 配图 / 自检")
 
-    names = engine.slot_names()
-
-    gen_col, slot_col = st.columns([1.2, 1])
-    with gen_col:
-        q = st.text_area("课件主题", placeholder="例如：帮我做《桃花源记》第一课时的课件，两课时", key="ppt_q")
-        slot_labels = ["不使用模板"] + [f"槽位 {s}（{names.get(str(s), '空')}）" for s in TEMPLATE_SLOTS]
-        slot_choice = st.selectbox("选择模板槽位", slot_labels, key="ppt_slot")
-        mode = st.radio(
-            "生成方式", ["仿风格重新做", "直接套模板"], horizontal=True, key="ppt_mode",
-            help="直接套=把内容填进模板自带的封面+内容页；仿风格=抽取模板配色/字体，重建标准版式新课件",
-        )
-        out_dir = st.text_input(
-            "输出文件夹", value=str(PPT_OUTPUT_DIR), key="ppt_outdir",
-            help="生成的 .pptx 存这里；可填绝对路径如 D:\\我的PPT，或相对项目路径；文件夹不存在会自动创建",
-        )
-        if st.button("生成 PPT", type="primary", key="ppt_btn"):
-            if not api_key_ready():
-                st.error("请先在 .env 填写真实 API key")
-            elif not (q or "").strip():
-                st.warning("请先填写课件主题")
-            else:
-                slot = None
-                if slot_choice != "不使用模板":
-                    slot = TEMPLATE_SLOTS[slot_labels.index(slot_choice) - 1]
-                m = "fill" if mode == "直接套模板" else "style"
-                if m == "fill" and slot is None:
-                    st.error("「直接套」需要先选择一个已放模板的槽位")
-                elif m == "fill" and not engine.slot_filled(slot):
-                    st.error("所选槽位还没有模板，请先在右侧上传，或改用「仿风格」")
-                else:
-                    with st.spinner("检索资料 + 生成课件中…"):
-                        try:
-                            res = ppt.run(q, template_slot=slot, mode=m, output_dir=out_dir)
-                        except Exception as e:
-                            st.error(f"生成失败：{e}")
-                            res = None
-                    if res:
-                        d = res.data or {}
-                        st.success(f"✅ 已生成 {d.get('slides', 0)} 页内容 + 封面，存于 {d.get('path', '')}")
-                        st.download_button(
-                            "⬇️ 下载 PPT 文件",
-                            data=Path(d["path"]).read_bytes(),
-                            file_name=d["filename"],
-                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                            key="ppt_dl",
-                        )
-                        st.markdown(res.content)
-                        _render_citations(res.citations)
-
-    with slot_col:
-        st.subheader("🗂 模板槽位（5 个）")
-        st.caption("每个槽位放一个 .pptx 模板，上传即覆盖；「直接套」用它的封面+内容页")
-        for s in TEMPLATE_SLOTS:
-            filled = engine.slot_filled(s)
-            name = names.get(str(s), "")
-            st.markdown(f"**槽位 {s}** — {'✅ 已放：' + name if filled else '⬜ 空'}")
-            up = st.file_uploader(f"上传到槽位 {s}", type=["pptx"], key=f"ppt_slot_{s}", label_visibility="collapsed")
-            if up is not None:
+    q = st.text_area("课件主题", placeholder="例如：帮我做《小石潭记》第一课时的课件 PPT，突出「移步换景」的写景顺序和由乐到悲的情感变化，要有原文金句页和两栏对比页。", key="ppt_q")
+    use_image = st.checkbox(
+        "AI 配图", value=True, key="ppt_image",
+        help="用 SiliconFlow 文生图铺底（需在 .env 配 SILICONFLOW_API_KEY）；未配 key 时自动回退纯矢量装饰",
+    )
+    out_dir = st.text_input(
+        "输出文件夹", value=str(PPT_OUTPUT_DIR), key="ppt_outdir",
+        help="生成的 .pptx 存这里；可填绝对路径如 D:\\我的PPT，或相对项目路径；文件夹不存在会自动创建",
+    )
+    if st.button("生成 PPT", type="primary", key="ppt_btn"):
+        if not api_key_ready():
+            st.error("请先在 .env 填写真实 API key")
+        elif not (q or "").strip():
+            st.warning("请先填写课件主题")
+        else:
+            with st.spinner("检索资料 + 生成课件中…"):
                 try:
-                    engine.save_slot(s, up.getvalue(), up.name)
-                    st.success(f"已保存到槽位 {s}：{up.name}")
+                    res = ppt.run(q, output_dir=out_dir, save=False, use_image=use_image)
                 except Exception as e:
-                    st.error(f"保存失败：{e}")
-        st.divider()
-        sample_slot = st.selectbox("生成示例模板到槽位", [str(s) for s in TEMPLATE_SLOTS], key="ppt_sample_slot")
-        if st.button("生成示例模板", key="ppt_sample_btn"):
-            p = engine.slot_path(int(sample_slot))
-            try:
-                engine.make_sample_template(p)
-                engine.save_slot(int(sample_slot), p.read_bytes(), f"示例模板-槽位{sample_slot}.pptx")
-                st.success(f"已生成示例模板到槽位 {sample_slot}")
-            except Exception as e:
-                st.error(f"生成失败：{e}")
+                    st.error(f"生成失败：{e}")
+                    res = None
+            if res:
+                d = res.data or {}
+                extra = []
+                if d.get("style"):
+                    extra.append(f"风格：{d['style']}")
+                if d.get("used_image"):
+                    extra.append("已配 AI 图")
+                if d.get("validate"):
+                    extra.append(f"自检调整 {d['validate']} 处")
+                suffix = f"（{'，'.join(extra)}）" if extra else ""
+                st.success(f"✅ 已生成 {d.get('slides', 0)} 页内容 + 封面{suffix}，存于 {d.get('path', '')}")
+                st.download_button(
+                    "⬇️ 下载 PPT 文件",
+                    data=Path(d["path"]).read_bytes(),
+                    file_name=d["filename"],
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    key="ppt_dl",
+                )
+                st.markdown(res.content)
+                _render_citations(res.citations)
+                _chunk_review("生成PPT", q, res.content)
 
 with tab7:
     st.header("文件管理")

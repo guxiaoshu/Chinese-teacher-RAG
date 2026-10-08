@@ -60,7 +60,8 @@ def _build_ref_context(past, refs) -> tuple[str, list[dict]]:
     return ctx, citations
 
 
-def run(essay: str, student: str = "", topic: str = "", grade: str = "") -> ChainResult:
+def run(essay: str, student: str = "", topic: str = "", grade: str = "",
+        save: bool = True) -> ChainResult:
     essay = (essay or "").strip()
     if not essay:
         return ChainResult(content="作文内容为空，请先粘贴或上传作文。", citations=[], data={})
@@ -96,9 +97,10 @@ def run(essay: str, student: str = "", topic: str = "", grade: str = "") -> Chai
         "level": level,
     })
 
-    save_essay(essay, student=student, topic=topic, level=level, score=total,
-               content_score=cs, expression_score=es, development_score=ds,
-               comment=data.get("overall_comment", ""), grade=grade)
+    if save:
+        save_essay(essay, student=student, topic=topic, level=level, score=total,
+                   content_score=cs, expression_score=es, development_score=ds,
+                   comment=data.get("overall_comment", ""), grade=grade)
 
     return ChainResult(content=_render(result), citations=citations, data=result)
 

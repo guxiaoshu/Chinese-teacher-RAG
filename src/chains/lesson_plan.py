@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..retrieval.retriever import retrieve
 from ..llm.deepseek import get_reason_llm
 from ..ingestion.generated import save_generated
-from .common import ChainResult, build_context
+from .common import ChainResult, build_context, with_memory
 
 _SYSTEM = """你是一位资深中学语文教研员，为一位有多年教学沉淀的老师做「针对性备课」。
 
@@ -21,15 +21,16 @@ _SYSTEM = """你是一位资深中学语文教研员，为一位有多年教学�
 8. 用 Markdown 输出，语言贴合一线教学，不空谈理论、不套模板话术。
 """
 
-def run(query: str) -> ChainResult:
+def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
     docs = retrieve(query)
     ctx, citations = build_context(docs)
-    user = f"备课需求：{query}\n\n检索到的参考材料：\n{ctx}"
+    user = with_memory(f"备课需求：{query}\n\n检索到的参考材料：\n{ctx}", memory)
     llm = get_reason_llm()
     resp = llm.invoke([
         {"role": "system", "content": _SYSTEM},
         {"role": "user", "content": user},
     ])
     content = resp.content
-    save_generated("写教案", query, content)
+    if save:
+        save_generated("写教案", query, content)
     return ChainResult(content=content, citations=citations)

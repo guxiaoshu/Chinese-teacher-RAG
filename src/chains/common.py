@@ -24,3 +24,11 @@ def build_context(docs: list[RetrievedDoc]) -> tuple[str, list[dict]]:
             "doc_type": d.doc_type,
         })
     return "\n\n---\n\n".join(parts), citations
+
+
+def with_memory(user: str, memory: str) -> str:
+    """把老师希望长期记住的上下文置顶注入到用户消息里（空则原样返回）。"""
+    m = (memory or "").strip()
+    if not m:
+        return user
+    return f"【老师希望你长期记住的上下文，生成时须优先遵循】\n{m}\n\n{user}"

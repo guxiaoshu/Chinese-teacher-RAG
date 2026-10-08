@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..retrieval.retriever import retrieve
 from ..llm.deepseek import invoke_json
 from ..ingestion.generated import save_generated
-from .common import ChainResult, build_context
+from .common import ChainResult, build_context, with_memory
 
 _SYSTEM = """你是中学语文命题专家，为老师「针对学生真实踩坑点定制试卷」。
 
@@ -28,16 +28,17 @@ _SYSTEM = """你是中学语文命题专家，为老师「针对学生真实踩�
 }
 """
 
-def run(query: str) -> ChainResult:
+def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
     docs = retrieve(query, library="private")
     ctx, citations = build_context(docs)
-    user = f"出题需求：{query}\n\n检索到的学生错题/作答样本（薄弱点必须来自这里）：\n{ctx}"
+    user = with_memory(f"出题需求：{query}\n\n检索到的学生错题/作答样本（薄弱点必须来自这里）：\n{ctx}", memory)
     data = invoke_json([
         {"role": "system", "content": _SYSTEM},
         {"role": "user", "content": user},
     ])
     content = _render(data)
-    save_generated("出题", query, content)
+    if save:
+        save_generated("出题", query, content)
     return ChainResult(content=content, citations=citations, data=data)
 
 def _render(data: dict) -> str:
