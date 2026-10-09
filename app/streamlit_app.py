@@ -172,6 +172,17 @@ def _chunk_review(scenario: str, query: str, content: str, rid: str = "", expand
                 else:
                     st.error("入库失败")
 
+def _clear_widget_on_next_run(key: str) -> None:
+    """在输入框实例化前清空它的值。
+
+    生成成功后不能直接 `st.session_state[key] = ""`——那个 widget 本轮已实例化，
+    Streamlit 会抛 StreamlitWidgetAlreadyInstantiatedError。改成立一个 flag，
+    下一轮渲染输入框之前再清空（此刻该 widget 还没实例化，允许赋值）。
+    """
+    if st.session_state.pop(f"_clear_{key}", False):
+        st.session_state[key] = ""
+
+
 def _push_round(hist_key: str, scenario: str, q: str, content: str, citations: list, warning: str = "") -> None:
     """把一轮「需求 → 结果」追加进该功能的会话记录，切 tab / 重跑都不丢。"""
     h = st.session_state.setdefault(hist_key, [])
@@ -387,6 +398,7 @@ with main_col:
 with tab1:
     st.header("针对性备课")
     st.caption("私有库优先召回你往年同篇教案、课堂记录、学生错题 → 公共库补教材课标 → 迭代出新版教案 + 板书 + 课堂预设")
+    _clear_widget_on_next_run("lp")
     q = st.text_area("备课需求", placeholder="例如：帮我备《岳阳楼记》，八年级下册，两课时。优先复用我往年上这篇时的提问和板书框架；这届学生文言虚词「其」「以」易错，写进重难点和课堂预设；结尾给 4~6 个跳出课本的启发式问题链（各标思考角度）。", key="lp")
     use_reason = st.checkbox(
         "用推理模型（更深，但更慢）", value=False, key="lp_reason",
@@ -410,13 +422,14 @@ with tab1:
             content = content or ""
             if ok:
                 _push_round("hist_lp", "写教案", q, content, citations, lesson_plan.grounding_warning(content, ctx))
-                st.session_state["lp"] = ""
+                st.session_state["_clear_lp"] = True
                 st.rerun()
     _render_rounds("hist_lp", "写教案")
 
 with tab2:
     st.header("针对性出题")
     st.caption("薄弱点必须来自私有错题库；选择题干扰项优先参考学生真实错误作答；对标课标不超纲")
+    _clear_widget_on_next_run("exam")
     q = st.text_area("出题需求", placeholder="例如：给《紫藤萝瀑布》出一份 20 分钟随堂练，重点考象征手法与托物言志。选择题干扰项直接用我班学生真实错过的点（借景抒情与象征混淆）；对标课标不超纲，每道题附评分细则。", key="exam")
     if st.button("生成试题", type="primary", key="exam_btn"):
         if not api_key_ready():
@@ -425,13 +438,14 @@ with tab2:
             with st.spinner("检索私有错题库 + 命题中…"):
                 res = exam.run(q, save=False, memory=_current_memory("出题"))
             _push_round("hist_exam", "出题", q, res.content, res.citations)
-            st.session_state["exam"] = ""
+            st.session_state["_clear_exam"] = True
             st.rerun()
     _render_rounds("hist_exam", "出题")
 
 with tab3:
     st.header("启发式答疑")
     st.caption("优先召回你课堂用过的例子、批注、学生疑问；启发式引导，不直接给完整答案")
+    _clear_widget_on_next_run("qa")
     q = st.text_area("问题", placeholder="例如：学生问《桃花源记》「乃不知有汉」的「乃」怎么理解。我不想直接讲，想用启发式一步步引他自己推出来，借我课堂里讲文言虚词用过的例子和追问方式。", key="qa")
     if st.button("开始答疑", type="primary", key="qa_btn"):
         if not api_key_ready():
@@ -440,13 +454,14 @@ with tab3:
             with st.spinner("检索老师过往资料 + 生成启发式回复…"):
                 res = qa.run(q, save=False, memory=_current_memory("答疑"))
             _push_round("hist_qa", "答疑", q, res.content, res.citations)
-            st.session_state["qa"] = ""
+            st.session_state["_clear_qa"] = True
             st.rerun()
     _render_rounds("hist_qa", "答疑")
 
 with tab4:
     st.header("学情沉淀")
     st.caption("基于私有错题/作答样本，输出某篇目/单元的高频错误、易混淆点与教学建议（越沉淀越强）")
+    _clear_widget_on_next_run("la")
     q = st.text_area("学情分析需求", placeholder="例如：分析《桃花源记》这一单元学生的整体薄弱点——高频错误、易混淆点、班级共性，并给针对性教学建议，结论尽量对应我错题库里的具体错题。", key="la")
     if st.button("生成学情诊断", type="primary", key="la_btn"):
         if not api_key_ready():
@@ -455,7 +470,7 @@ with tab4:
             with st.spinner("分析私有错题中…"):
                 res = learning_analysis.run(q, save=False, memory=_current_memory("学情分析"))
             _push_round("hist_la", "学情分析", q, res.content, res.citations)
-            st.session_state["la"] = ""
+            st.session_state["_clear_la"] = True
             st.rerun()
     _render_rounds("hist_la", "学情分析")
 
