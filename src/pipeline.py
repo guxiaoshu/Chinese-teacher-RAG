@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 
@@ -19,6 +20,9 @@ from .chunking import chunk_for
 from .llm.embeddings import embed_documents
 from .vectorstore.store import upsert_chunks, delete_by_source_hash
 from .retrieval.retriever import rebuild_index, contextualize
+
+# 入库会用到共享的 embedding 模型 / tokenizer / ChromaDB，用全局锁串行化，避免并发竞态
+_INGEST_LOCK = threading.Lock()
 
 def detect_library(path: Path | str) -> str:
     rp = Path(path).resolve()
@@ -72,7 +76,7 @@ def build_meta(path: Path, library: str, sha: str, tags, chunk_meta: dict, idx: 
     meta.update(chunk_meta)
     return meta
 
-def process_file(path: Path | str) -> dict:
+def process_file(path: Path | str, rebuild: bool = True) -> dict:
     init_db()
     p = Path(path)
     if not p.exists():
@@ -93,31 +97,35 @@ def process_file(path: Path | str) -> dict:
         except Exception:
             pass
 
-    try:
-        text = extract_text(p)
-        if not text or not text.strip():
-            mark_skipped(p, sha, library)
-            return {"path": str(p), "status": "skipped", "reason": "文档无文本层（可能是扫描版 PDF）"}
+    # 串行入库：embedding 模型 / tokenizer / ChromaDB 是共享资源，
+    # 并发调用会触发 Rust 侧「Already borrowed」等异常
+    with _INGEST_LOCK:
+        try:
+            text = extract_text(p)
+            if not text or not text.strip():
+                mark_skipped(p, sha, library)
+                return {"path": str(p), "status": "skipped", "reason": "文档无文本层（可能是扫描版 PDF）"}
 
-        tags = classify(text, filename=p.name, hint_dir=_hint_dir(p, library))
-        chunks = chunk_for(tags.doc_type, text)
-        if not chunks:
-            mark_error(p, sha, library, "切片结果为空")
-            return {"path": str(p), "status": "error", "error": "切片结果为空"}
+            tags = classify(text, filename=p.name, hint_dir=_hint_dir(p, library))
+            chunks = chunk_for(tags.doc_type, text)
+            if not chunks:
+                mark_error(p, sha, library, "切片结果为空")
+                return {"path": str(p), "status": "error", "error": "切片结果为空"}
 
-        ids, texts, metas = [], [], []
-        for i, c in enumerate(chunks):
-            if not c.text.strip():
-                continue
-            ids.append(f"{sha}-{i}")
-            texts.append(c.text)
-            metas.append(build_meta(p, library, sha, tags, c.meta, i))
+            ids, texts, metas = [], [], []
+            for i, c in enumerate(chunks):
+                if not c.text.strip():
+                    continue
+                ids.append(f"{sha}-{i}")
+                texts.append(c.text)
+                metas.append(build_meta(p, library, sha, tags, c.meta, i))
 
-        embs = embed_documents([contextualize(t, m) for t, m in zip(texts, metas)])
-        upsert_chunks(library, ids, texts, embs, metas)
-        rebuild_index(library)
-        mark_processed(p, sha, library, len(texts), tags.doc_type, tags.to_metadata())
-        return {"path": str(p), "status": "processed", "chunks": len(texts), "doc_type": tags.doc_type}
-    except Exception as e:
-        mark_error(p, sha, library, str(e))
-        return {"path": str(p), "status": "error", "error": str(e)}
+            embs = embed_documents([contextualize(t, m) for t, m in zip(texts, metas)])
+            upsert_chunks(library, ids, texts, embs, metas)
+            if rebuild:
+                rebuild_index(library)
+            mark_processed(p, sha, library, len(texts), tags.doc_type, tags.to_metadata())
+            return {"path": str(p), "status": "processed", "chunks": len(texts), "doc_type": tags.doc_type}
+        except Exception as e:
+            mark_error(p, sha, library, str(e))
+            return {"path": str(p), "status": "error", "error": str(e)}

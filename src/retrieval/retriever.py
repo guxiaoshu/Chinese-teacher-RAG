@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import jieba
 from rank_bm25 import BM25Okapi
 
-from ..config import CONFIG, authority_weight_map, api_key_ready
+from ..config import CONFIG, authority_weight_map, api_key_ready, allowed_grades
 from ..llm.embeddings import embed_query, embed_documents
 from ..llm.deepseek import invoke_json
 from ..vectorstore.store import LIBRARY_COLLECTION, get_all_documents, get_collection, upsert_chunks
@@ -151,6 +152,22 @@ def contextualize(text: str, meta: dict) -> str:
     if not parts:
         return text
     return "【" + "】【".join(parts) + "】" + text
+
+
+_GRADE_RE = re.compile("|".join(re.escape(g) for g in allowed_grades()))
+
+
+def _regex_intent(query: str) -> dict:
+    """零 LLM 的意图解析：从提问里用正则抽《篇目》与学段，供元数据加权（快速模式）。"""
+    article = ""
+    m = re.search(r"《([^》]{1,30})》", query)
+    if m:
+        article = m.group(1).strip()
+    grade = ""
+    gm = _GRADE_RE.search(query)
+    if gm:
+        grade = gm.group(0)
+    return {"article": article, "grade": grade, "knowledge_points": [], "doc_type": ""}
 
 
 def _metadata_boost(meta: dict, intent: dict) -> float:
@@ -315,11 +332,24 @@ def _rerank(query: str, docs: list[RetrievedDoc], top_k: int, enabled: bool) -> 
 
 
 def retrieve(query: str, library: str | None = None, filters: dict | None = None,
-             top_k: int | None = None, rewrite: bool = True) -> list[RetrievedDoc]:
-    queries = expand_queries(query) if rewrite else [query]
-    intent = {}
-    if rewrite and _R.get("use_metadata_boost") and api_key_ready():
-        intent = extract_intent(query)
+             top_k: int | None = None, rewrite: bool | None = None) -> list[RetrievedDoc]:
+    # rewrite=None 时读 config 的 retrieval.rewrite（默认关）：false 走纯向量+BM25+RRF 快速路径。
+    if rewrite is None:
+        rewrite = bool(_R.get("rewrite", True))
+    # 查询扩展与意图解析是两个独立的 LLM 往返，串行会白白叠加网络延迟；
+    # 并行发起，等待从「求和」变成「取最长」。带缓存，重复提问仍走 lru_cache。
+    if rewrite:
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            f_queries = ex.submit(expand_queries, query)
+            use_intent = bool(_R.get("use_metadata_boost")) and api_key_ready()
+            f_intent = ex.submit(extract_intent, query) if use_intent else None
+            queries = f_queries.result()
+            intent = f_intent.result() if f_intent else {}
+    else:
+        queries = [query]
+        # 快速模式下仍用正则抽《篇目》/学段做元数据加权，不额外调 LLM
+        intent = _regex_intent(query) if _R.get("use_metadata_boost") else {}
+
     do_rerank = rewrite and bool(_R.get("rerank")) and api_key_ready()
 
     if library in ("private", "public", "composition"):
@@ -331,8 +361,12 @@ def retrieve(query: str, library: str | None = None, filters: dict | None = None
     k_pub = _R["public_top_k"]
     priv = _recall_library("private", queries, filters, k_priv, intent)
     pub = _recall_library("public", queries, filters, k_pub, intent)
-    priv = _rerank(query, priv, k_priv, do_rerank)
-    pub = _rerank(query, pub, k_pub, do_rerank)
+    # 两个库的精排互不依赖（纯 LLM 调用），并行发起；召回（向量+BM25）保持串行，避免并发碰共享 embedding/Chroma。
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_priv = ex.submit(_rerank, query, priv, k_priv, do_rerank)
+        f_pub = ex.submit(_rerank, query, pub, k_pub, do_rerank)
+        priv = f_priv.result()
+        pub = f_pub.result()
     # 私有库加权后与公共库合并排序（private_weight > 1 表示私有优先）
     pw = float(_R.get("private_weight", 1.0))
     for d in priv:

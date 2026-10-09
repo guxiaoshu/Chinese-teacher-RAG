@@ -89,8 +89,30 @@ def _encode_one(model, tok, device, text: str):
 
 def _encode(texts: list[str], normalize: bool = True):
     model, tok, device = _load()
-    vecs = [_encode_one(model, tok, device, t) for t in texts]
-    out = torch.cat(vecs, dim=0)
+    if not texts:
+        return torch.empty((0, model.config.hidden_size)).cpu().numpy()
+
+    # 短文本（≤512 token）合并成真正的 batch 一次前向：CPU 上比逐个前向快一个量级；
+    # 超长文本仍走 _encode_one 滑窗，避免被截断丢信息。
+    short_idx: list[int] = []
+    long_idx: list[int] = []
+    for i, t in enumerate(texts):
+        n = len(tok(t, add_special_tokens=False, truncation=False)["input_ids"])
+        (short_idx if n <= _MAX_LEN - 2 else long_idx).append(i)
+
+    vecs: list = [None] * len(texts)
+    if short_idx:
+        enc = tok([texts[i] for i in short_idx], padding=True, truncation=True,
+                  max_length=_MAX_LEN, return_tensors="pt")
+        enc = {k: v.to(device) for k, v in enc.items()}
+        with torch.no_grad():
+            out = model(**enc)
+        for pos, i in enumerate(short_idx):
+            vecs[i] = out.last_hidden_state[pos, 0]
+    for i in long_idx:
+        vecs[i] = _encode_one(model, tok, device, texts[i])[0]
+
+    out = torch.stack(vecs, dim=0)
     if normalize:
         out = F.normalize(out, p=2, dim=1)
     return out.cpu().numpy()

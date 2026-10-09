@@ -75,6 +75,7 @@ embedding:
   query_instruction: "为这个句子生成表示以用于检索相关文章："
 
 retrieval:
+  rewrite: false  # 检索前是否用 LLM 做查询扩展/意图解析/精排（true=更准但每轮多 4~6 次 LLM 往返；false=纯向量+BM25+RRF，快很多）
   private_top_k: 6    # 私有库召回条数（优先）
   public_top_k: 4     # 公共库补充条数
   bm25_top_k: 8       # 关键词召回条数（每个库）
@@ -89,7 +90,7 @@ retrieval:
   dedup_similarity: 0.8   # 近重复片段去重阈值（Jaccard 0~1，0 关闭）
 
 generation:
-  verify_grounding: true  # 写教案生成后做引用接地自检，标出未落到检索材料的结论
+  verify_grounding: false  # 写教案生成后做引用接地自检（额外一次 LLM 往返；false=跳过，更快）
 
 chunking:
   max_chunk_chars: 450   # 兜底切片的块大小（对齐 bge-base-zh 512 token 上限，避免向量被截断/稀释）

@@ -4,6 +4,7 @@ import sys
 import re
 import hashlib
 import base64
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from src.llm.embeddings import embed_query
 from src.pipeline import process_file
 from src.chains import lesson_plan, exam, qa, learning_analysis, essay, ppt, chat
 from src.memory import load as load_memory, save as save_memory, SCOPES as MEMORY_SCOPES
+from src.history import FEATURES as HISTORY_FEATURES, load as load_history, save as save_history
 
 def _favicon_data_uri() -> str:
     """把北鱼读书图标编码成 data URI 直接当浏览器 favicon。
@@ -42,6 +44,11 @@ def _favicon_data_uri() -> str:
 st.set_page_config(page_title="语文教学 RAG 助手", page_icon=_favicon_data_uri(), layout="wide")
 
 init_db()
+
+# —— 会话记录持久化：先把各功能历史从磁盘读回 session_state，之后追加时再写回 ——
+for _hk in HISTORY_FEATURES:
+    if _hk not in st.session_state:
+        st.session_state[_hk] = load_history(_hk)
 
 if "watcher" not in st.session_state:
     st.session_state["watcher"] = IngestWatcher(process_file)
@@ -110,9 +117,9 @@ def _render_citations(citations: list[dict]) -> None:
             st.markdown(f"**[{c['index']}]** {lib} · `{c['source_file']}` · {c['doc_type']}{suffix}")
 
 
-def _render_feedback(scenario: str, query: str, content: str) -> None:
+def _render_feedback(scenario: str, query: str, content: str, rid: str = "") -> None:
     """👍/👎 反馈 + 编辑后重新入库（修正版成为高权威私有资料）。"""
-    nonce = hashlib.sha256((scenario + content).encode("utf-8")).hexdigest()[:8]
+    nonce = hashlib.sha256((rid or scenario + content).encode("utf-8")).hexdigest()[:10]
     fb1, fb2, fb3 = st.columns([1, 1, 6])
     if fb1.button("👍", key=f"fb_up_{nonce}", help="这个结果不错"):
         record_feedback(query, content, "up")
@@ -134,17 +141,17 @@ def _render_feedback(scenario: str, query: str, content: str) -> None:
                     st.error("入库失败")
 
 
-def _chunk_review(scenario: str, query: str, content: str) -> None:
+def _chunk_review(scenario: str, query: str, content: str, rid: str = "", expanded: bool = True) -> None:
     """把本次生成内容切成切片，逐片勾选后手动入库私有库。"""
     info = preview_generated_chunks(scenario, query, content)
     chunks = info["chunks"]
     if not chunks:
         st.caption("（本次内容过短，切不出可入库的切片）")
         return
-    nonce = info["sha"][:8]
+    nonce = hashlib.sha256((rid or info["sha"]).encode("utf-8")).hexdigest()[:10]
     with st.expander(
         f"📥 手动入库：本次切出 {len(chunks)} 片，勾选要存进私有库的切片（默认全选）",
-        expanded=True,
+        expanded=expanded,
     ):
         selected: list[int] = []
         for c in chunks:
@@ -164,6 +171,28 @@ def _chunk_review(scenario: str, query: str, content: str) -> None:
                     st.success(f"✅ 已入库 {len(selected)} 片")
                 else:
                     st.error("入库失败")
+
+def _push_round(hist_key: str, scenario: str, q: str, content: str, citations: list, warning: str = "") -> None:
+    """把一轮「需求 → 结果」追加进该功能的会话记录，切 tab / 重跑都不丢。"""
+    h = st.session_state.setdefault(hist_key, [])
+    rid = f"{scenario}-{len(h)}-{int(time.time() * 1000)}"
+    h.append({"q": q, "content": content, "citations": citations, "warning": warning, "rid": rid})
+    save_history(hist_key, h)
+
+
+def _render_rounds(hist_key: str, scenario: str) -> None:
+    """渲染某功能已保存的多轮记录（切 tab 回来仍可见，同功能多轮累积）。"""
+    for r in st.session_state.get(hist_key, []):
+        with st.chat_message("user"):
+            st.markdown(r["q"])
+        with st.chat_message("assistant"):
+            st.markdown(r["content"])
+            if r.get("warning"):
+                st.markdown(r["warning"])
+            _render_citations(r.get("citations") or [])
+            _chunk_review(scenario, r["q"], r["content"], rid=r["rid"], expanded=False)
+            _render_feedback(scenario, r["q"], r["content"], rid=r["rid"])
+
 
 def _current_memory(feature: str) -> str:
     """右侧「希望我记住什么？」框当前内容；只在该 feature 对应按钮点亮时注入。"""
@@ -306,7 +335,7 @@ with main_col:
         with icon_col:
             st.image(str(_ROOT / "images" / "deepseek.png"), width=36)
         with title_col:
-            st.subheader("临时聊")
+            st.subheader("临时的聊天，解决一些零碎问题")
         with toggle_col:
             if "chat_open" not in st.session_state:
                 st.session_state["chat_open"] = True
@@ -359,18 +388,31 @@ with tab1:
     st.header("针对性备课")
     st.caption("私有库优先召回你往年同篇教案、课堂记录、学生错题 → 公共库补教材课标 → 迭代出新版教案 + 板书 + 课堂预设")
     q = st.text_area("备课需求", placeholder="例如：帮我备《岳阳楼记》，八年级下册，两课时。优先复用我往年上这篇时的提问和板书框架；这届学生文言虚词「其」「以」易错，写进重难点和课堂预设；结尾给 4~6 个跳出课本的启发式问题链（各标思考角度）。", key="lp")
+    use_reason = st.checkbox(
+        "用推理模型（更深，但更慢）", value=False, key="lp_reason",
+        help="勾选走 deepseek-v4-pro（深度优先）；不勾用快模型，速度约快一个量级。",
+    )
     if st.button("生成教案", type="primary", key="lp_btn"):
         if not api_key_ready():
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
-            with st.spinner("检索私有库 + 生成教案中（推理模型较慢，请稍候）…"):
-                res = lesson_plan.run(q, save=False, memory=_current_memory("写教案"))
-            st.markdown(res.content)
-            if res.data and res.data.get("grounding_warning"):
-                st.markdown(res.data["grounding_warning"])
-            _render_citations(res.citations)
-            _chunk_review("写教案", q, res.content)
-            _render_feedback("写教案", q, res.content)
+            memory = _current_memory("写教案")
+            with st.spinner("检索私有库 + 备课中…"):
+                user, ctx, citations = lesson_plan.prepare(q, memory)
+            ok = True
+            with st.chat_message("assistant"):
+                try:
+                    content = st.write_stream(lesson_plan.stream_from(user, use_reason=use_reason))
+                except Exception as e:
+                    content = f"出错了：{e}"
+                    ok = False
+                    st.error(content)
+            content = content or ""
+            if ok:
+                _push_round("hist_lp", "写教案", q, content, citations, lesson_plan.grounding_warning(content, ctx))
+                st.session_state["lp"] = ""
+                st.rerun()
+    _render_rounds("hist_lp", "写教案")
 
 with tab2:
     st.header("针对性出题")
@@ -382,10 +424,10 @@ with tab2:
         elif q.strip():
             with st.spinner("检索私有错题库 + 命题中…"):
                 res = exam.run(q, save=False, memory=_current_memory("出题"))
-            st.markdown(res.content)
-            _render_citations(res.citations)
-            _chunk_review("出题", q, res.content)
-            _render_feedback("出题", q, res.content)
+            _push_round("hist_exam", "出题", q, res.content, res.citations)
+            st.session_state["exam"] = ""
+            st.rerun()
+    _render_rounds("hist_exam", "出题")
 
 with tab3:
     st.header("启发式答疑")
@@ -397,10 +439,10 @@ with tab3:
         elif q.strip():
             with st.spinner("检索老师过往资料 + 生成启发式回复…"):
                 res = qa.run(q, save=False, memory=_current_memory("答疑"))
-            st.markdown(res.content)
-            _render_citations(res.citations)
-            _chunk_review("答疑", q, res.content)
-            _render_feedback("答疑", q, res.content)
+            _push_round("hist_qa", "答疑", q, res.content, res.citations)
+            st.session_state["qa"] = ""
+            st.rerun()
+    _render_rounds("hist_qa", "答疑")
 
 with tab4:
     st.header("学情沉淀")
@@ -412,10 +454,10 @@ with tab4:
         elif q.strip():
             with st.spinner("分析私有错题中…"):
                 res = learning_analysis.run(q, save=False, memory=_current_memory("学情分析"))
-            st.markdown(res.content)
-            _render_citations(res.citations)
-            _chunk_review("学情分析", q, res.content)
-            _render_feedback("学情分析", q, res.content)
+            _push_round("hist_la", "学情分析", q, res.content, res.citations)
+            st.session_state["la"] = ""
+            st.rerun()
+    _render_rounds("hist_la", "学情分析")
 
 with tab5:
     st.header("🖊 作文批改")

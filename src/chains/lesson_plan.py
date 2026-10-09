@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..retrieval.retriever import retrieve
-from ..llm.deepseek import get_reason_llm, invoke_json
+from ..llm.deepseek import get_chat_llm, get_reason_llm, invoke_json
 from ..config import CONFIG, api_key_ready
 from ..ingestion.generated import save_generated
 from .common import ChainResult, build_context, with_memory
@@ -54,11 +54,38 @@ def _format_warning(issues: list[dict]) -> str:
     return "".join(lines)
 
 
-def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
+def prepare(query: str, memory: str = "") -> tuple[str, str, list[dict]]:
+    """检索 + 组装消息，返回 (user 消息, 检索上下文, 引用列表)，供流式与整段生成共用。"""
     docs = retrieve(query)
     ctx, citations = build_context(docs)
     user = with_memory(f"备课需求：{query}\n\n检索到的参考材料：\n{ctx}", memory)
-    llm = get_reason_llm()
+    return user, ctx, citations
+
+
+def _llm(use_reason: bool, streaming: bool = False):
+    return get_reason_llm(streaming=streaming) if use_reason else get_chat_llm(streaming=streaming)
+
+
+def stream_from(user: str, use_reason: bool = False):
+    """流式生成教案正文；检索由 prepare 先取，引用自检由 grounding_warning 后置。"""
+    llm = _llm(use_reason, streaming=True)
+    for chunk in llm.stream([
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": user},
+    ]):
+        if chunk.content:
+            yield chunk.content
+
+
+def grounding_warning(content: str, ctx: str) -> str:
+    """引用接地自检：标出未落到检索材料上的结论（只提示，不改写，避免二次 pro 开销）。"""
+    issues = _verify_grounding(content, ctx)
+    return _format_warning(issues)
+
+
+def run(query: str, save: bool = True, memory: str = "", use_reason: bool = False) -> ChainResult:
+    user, ctx, citations = prepare(query, memory)
+    llm = _llm(use_reason)
     resp = llm.invoke([
         {"role": "system", "content": _SYSTEM},
         {"role": "user", "content": user},
@@ -67,9 +94,7 @@ def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
     if save:
         save_generated("写教案", query, content)
 
-    # 引用接地自检：标出未落到检索材料上的结论（只提示，不改写，避免二次 pro 开销）。
     # 自检块不并入 content——否则手动入库/修正入库会把警告当教学内容存进私有库，
     # 改由前端单独渲染（data.grounding_warning）。
-    issues = _verify_grounding(content, ctx)
     return ChainResult(content=content, citations=citations,
-                       data={"grounding_warning": _format_warning(issues)})
+                       data={"grounding_warning": grounding_warning(content, ctx)})
