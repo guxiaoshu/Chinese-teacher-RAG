@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from datetime import datetime
 
@@ -9,7 +10,7 @@ from ..tagging.classifier import DocTags
 from ..chunking import chunk_for
 from ..llm.embeddings import embed_documents
 from ..vectorstore.store import upsert_chunks
-from ..retrieval.retriever import rebuild_index
+from ..retrieval.retriever import rebuild_index, contextualize
 
 _SCENARIO_TO_TYPE = {
     "写教案": "教案",
@@ -86,7 +87,7 @@ def _commit(meta_common: dict, chunks, selected: set | None) -> int:
         metas.append(meta)
     if not texts:
         return 0
-    embs = embed_documents(texts)
+    embs = embed_documents([contextualize(t, m) for t, m in zip(texts, metas)])
     upsert_chunks("private", ids, texts, embs, metas)
     rebuild_index("private")
     return len(texts)
@@ -147,3 +148,39 @@ def save_generated_selected(scenario: str, query: str, content: str, selected) -
         return n > 0
     except Exception:
         return False
+
+
+def save_corrected(scenario: str, query: str, corrected_text: str) -> bool:
+    """老师改好的版本入库为高权威：authority=教师批注、generated=False。
+
+    绕过检索侧对 generated=True 的降权，让修正版下次检索排到最前，形成「越改越懂你」的闭环。
+    """
+    prepared = _prepare(scenario, query, corrected_text)
+    if prepared is None:
+        return False
+    _, source_name, _, meta_common, chunks = prepared
+    meta_common["authority"] = "教师批注"
+    meta_common["generated"] = False
+    try:
+        n = _commit(meta_common, chunks, None)
+        if n:
+            _write_source_file(scenario, query, corrected_text, source_name)
+        return n > 0
+    except Exception:
+        return False
+
+
+def record_feedback(query: str, content: str, vote: str) -> None:
+    """把 👍/👎 反馈追加写入 data/feedback.jsonl（先落数据，为后续评测/调权重打底）。"""
+    try:
+        record = {
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "vote": vote,
+            "query": (query or "")[:500],
+            "content_hash": hashlib.sha256((content or "").encode("utf-8")).hexdigest()[:16],
+        }
+        path = DATA_DIR / "feedback.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass

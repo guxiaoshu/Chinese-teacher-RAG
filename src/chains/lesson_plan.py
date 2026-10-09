@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from ..retrieval.retriever import retrieve
-from ..llm.deepseek import get_reason_llm
+from ..llm.deepseek import get_reason_llm, invoke_json
+from ..config import CONFIG, api_key_ready
 from ..ingestion.generated import save_generated
 from .common import ChainResult, build_context, with_memory
 
@@ -18,8 +19,40 @@ _SYSTEM = """你是一位资深中学语文教研员，为一位有多年教学�
 5. 在教案末尾新增「💡 启发式问题链」小节：设计 4~6 个**开放式问题**（无唯一标准答案，重在激发思考而非考查记忆）。每个问题标注一个**思考角度**，角度尽量不重复、覆盖多方位，例如：文本细读、情感体验、价值观思辨、跨学科联想、现实关联、比较阅读、批判质疑。这些问题要**跳出课本、调用你广博的知识面**——引入历史背景、哲学、科学、当下生活或其它文学作品，引导学生举一反三、多方位联想，而不是复述课文或检索资料。
 6. 所有引用材料用 [n] 标注；引用时说明来自【私有知识库】还是【公共基准库】。
 7. 若私有资料之间冲突，以教师手写批注版本为准。
-8. 用 Markdown 输出，语言贴合一线教学，不空谈理论、不套模板话术。
+8. 凡是你基于自身知识补充、检索材料里没有的内容，必须标注「（通用知识补充）」，不得伪装成引用材料里的内容。
+9. 用 Markdown 输出，语言贴合一线教学，不空谈理论、不套模板话术。
 """
+
+_VERIFY_SYSTEM = """你是教案引用接地校验器。判断一份教案里，哪些结论/说法没有被给定的参考材料支撑（属于模型凭常识补充、但未落到检索材料上的内容）。
+
+规则：
+1. 只挑「明显需要材料支撑、但材料里找不到依据」的结论：如具体的学生痛点、课堂细节、某道题的出法、历史背景断言、往年教学事实等。
+2. 通用教学常识、礼貌用语、纯方法论不算问题。
+3. 只输出 JSON：{"issues": [{"text": "结论原文片段", "reason": "为什么可能未落到材料"}]}；没有则 {"issues": []}。"""
+
+
+def _verify_grounding(content: str, ctx: str) -> list[dict]:
+    if not CONFIG.get("generation", {}).get("verify_grounding", True) or not api_key_ready():
+        return []
+    try:
+        raw = invoke_json([
+            {"role": "system", "content": _VERIFY_SYSTEM},
+            {"role": "user", "content": f"参考材料：\n{ctx[:8000]}\n\n教案内容：\n{content[:8000]}"},
+        ], temperature=0.0)
+        return [i for i in (raw.get("issues") or []) if isinstance(i, dict) and (i.get("text") or "").strip()]
+    except Exception:
+        return []
+
+
+def _format_warning(issues: list[dict]) -> str:
+    """把自检问题格式化成提示块（空列表返回空串）。"""
+    if not issues:
+        return ""
+    lines = [f"\n\n---\n\n⚠️ **引用自检**：以下 {len(issues)} 处结论可能未充分落在检索材料上，建议核对："]
+    for i, it in enumerate(issues, 1):
+        lines.append(f"\n{i}. {it.get('text', '')}（{it.get('reason', '可能缺少依据')}）")
+    return "".join(lines)
+
 
 def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
     docs = retrieve(query)
@@ -33,4 +66,10 @@ def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
     content = resp.content
     if save:
         save_generated("写教案", query, content)
-    return ChainResult(content=content, citations=citations)
+
+    # 引用接地自检：标出未落到检索材料上的结论（只提示，不改写，避免二次 pro 开销）。
+    # 自检块不并入 content——否则手动入库/修正入库会把警告当教学内容存进私有库，
+    # 改由前端单独渲染（data.grounding_warning）。
+    issues = _verify_grounding(content, ctx)
+    return ChainResult(content=content, citations=citations,
+                       data={"grounding_warning": _format_warning(issues)})

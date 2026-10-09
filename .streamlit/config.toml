@@ -1,0 +1,4 @@
+[server]
+# 单个上传文件大小上限（MB）。默认 200，这里放宽到 2GB。
+# 超过 2GB 的大文件别走浏览器上传，直接放进 ingest/private 或 ingest/public 再点「扫描现有文件」。
+maxUploadSize = 2000

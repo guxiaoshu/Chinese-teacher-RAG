@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import json
+import re
 import threading
 from dataclasses import dataclass, field
 
 import jieba
 from rank_bm25 import BM25Okapi
 
-from ..config import CONFIG, authority_weight_map
-from ..llm.embeddings import embed_query
-from ..vectorstore.store import LIBRARY_COLLECTION, get_all_documents, get_collection
-from .query_rewrite import rewrite_query
+from ..config import CONFIG, authority_weight_map, api_key_ready
+from ..llm.embeddings import embed_query, embed_documents
+from ..llm.deepseek import invoke_json
+from ..vectorstore.store import LIBRARY_COLLECTION, get_all_documents, get_collection, upsert_chunks
+from .query_rewrite import expand_queries, extract_intent
 
 _R = CONFIG["retrieval"]
 _AUTHORITY = authority_weight_map()
@@ -42,7 +45,7 @@ def rebuild_index(library: str | None = None) -> None:
         ids = data.get("ids") or []
         texts = data.get("documents") or []
         metas = data.get("metadatas") or []
-        tokenized = [_tokenize(t) for t in texts]
+        tokenized = [_tokenize(contextualize(t, m or {})) for t, m in zip(texts, metas)]
         bm25 = BM25Okapi(tokenized) if tokenized else None
         with _index_lock:
             _index[lib] = {"ids": ids, "texts": texts, "metas": metas,
@@ -106,11 +109,78 @@ def _rrf(rankings: list[list[str]], k: int) -> list[tuple[str, float]]:
             scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
     return sorted(scores.items(), key=lambda x: -x[1])
 
-def _retrieve_single(library: str, query: str, filters: dict | None, top_k: int) -> list[RetrievedDoc]:
-    n = max(top_k, _R["bm25_top_k"], _R["private_top_k"], _R["public_top_k"])
+
+def _meta_list(meta: dict, key: str) -> list[str]:
+    """Chroma 把 list 元数据存成了 JSON 字符串，这里统一解析成 list。"""
+    v = meta.get(key)
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return [str(x) for x in v]
+    if isinstance(v, str):
+        try:
+            parsed = json.loads(v)
+        except Exception:
+            return [v]
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+        return [v]
+    return [str(v)]
+
+
+def contextualize(text: str, meta: dict) -> str:
+    """上下文检索：把片段的 篇目/学段/知识点 前置拼进文本，供「嵌入 + BM25」使用。
+
+    存库仍存原文，这里只在喂给向量/关键词时加前缀，避免显示污染；同时让
+    《古文观止》这类整本书只打一个篇目标签的切片，也能被「岳阳楼记」这类
+    篇目关键词召回，而不是靠正文里恰好出现这几个字。
+    """
+    if not _R.get("contextualize", True):
+        return text
+    meta = meta or {}
+    article = (meta.get("article") or "").strip()
+    grade = (meta.get("grade") or "").strip()
+    kps = _meta_list(meta, "knowledge_points")[:3]
+    parts = []
+    if article:
+        parts.append(f"篇目：{article}")
+    if grade:
+        parts.append(f"学段：{grade}")
+    if kps:
+        parts.append("知识点：" + "、".join(kps))
+    if not parts:
+        return text
+    return "【" + "】【".join(parts) + "】" + text
+
+
+def _metadata_boost(meta: dict, intent: dict) -> float:
+    """按检索意图（篇目/学段/知识点）给候选片段加分，让打好的标签真正参与排序。"""
+    if not intent:
+        return 0.0
+    score = 0.0
+    article = (intent.get("article") or "").strip()
+    grade = (intent.get("grade") or "").strip()
+    kps = intent.get("knowledge_points") or []
+
+    if article:
+        meta_article = (meta.get("article") or "").strip()
+        if meta_article and meta_article == article:
+            score += 0.5
+        elif meta_article and article in meta_article:
+            score += 0.2
+    if grade and (meta.get("grade") or "") == grade:
+        score += 0.15
+    if kps:
+        overlap = len(set(kps) & set(_meta_list(meta, "knowledge_points")))
+        if overlap:
+            score += 0.1 * overlap
+    return score
+
+
+def _recall_candidates(library: str, query: str, filters: dict | None, n: int, intent: dict) -> list[RetrievedDoc]:
+    """召回候选：向量 + BM25 → RRF → 权威加权 → 元数据加权（不做精排）。"""
     vec_ids = _vector_rank(library, query, filters, n)
     bm_ids = _bm25_rank(library, query, filters, n)
-
     ranked = _rrf([vec_ids, bm_ids], _R["rrf_k"])
 
     idx = _ensure_index(library)
@@ -128,8 +198,9 @@ def _retrieve_single(library: str, query: str, filters: dict | None, top_k: int)
         # AI 自动沉淀的内容（generated=True）一律按最低权威，避免"模型读自己上次输出"的自我强化
         if meta.get("generated"):
             weight = 1
-        # 权威作为相对加成乘到 RRF 分数上，只微调排序、不盖过相关性
         final_score = rrf_score * (1 + (weight - 1) * _R["authority_boost"])
+        if _R.get("use_metadata_boost"):
+            final_score += _metadata_boost(meta, intent)
         results.append(RetrievedDoc(
             text=text,
             meta=meta,
@@ -140,24 +211,154 @@ def _retrieve_single(library: str, query: str, filters: dict | None, top_k: int)
             chunk_id=doc_id,
         ))
     results.sort(key=lambda d: -d.score)
-    return results[:top_k]
+    return results
+
+
+def _recall_library(library: str, queries: list[str], filters: dict | None, top_k: int, intent: dict) -> list[RetrievedDoc]:
+    """多查询变体分别召回后按 chunk 合并（多路命中加分），返回排序后的候选列表（不截断）。"""
+    n = max(top_k, _R["bm25_top_k"], _R.get("rerank_candidates", 20))
+    merged: dict[str, RetrievedDoc] = {}
+    for q in queries:
+        for d in _recall_candidates(library, q, filters, n, intent):
+            if d.chunk_id in merged:
+                # 多个变体都命中 → 取更高分并加一个命中加成
+                merged[d.chunk_id].score = max(merged[d.chunk_id].score, d.score) + 0.05
+            else:
+                merged[d.chunk_id] = d
+    return sorted(merged.values(), key=lambda d: -d.score)
+
+
+_RERANK_SYSTEM = """你是检索结果精排器。给定用户问题和若干候选文本片段（每片有编号），做两件事：
+1. 按与问题的语义相关性从高到低排序。
+2. 判断每片与问题「相关」（能帮助回答/备课该问题）还是「无关」（主题无关，即使个别词重合也不算相关）。
+只输出 JSON：{"rank": [编号...], "relevant": [相关编号...]}。rank 按相关性降序、必须包含所有编号；relevant 是 rank 的子集，只放真正相关的编号。不要输出其它文字。"""
+
+
+def _llm_rerank(query: str, docs: list[RetrievedDoc]) -> list[RetrievedDoc]:
+    """用 flash 对候选做 listwise 相关性精排，并丢弃被判为「无关」的候选。
+
+    失败或未返回 relevant 字段时原样返回（不丢任何候选），由调用方截断。
+    """
+    if len(docs) <= 1:
+        return docs
+    items = []
+    for i, d in enumerate(docs):
+        text = re.sub(r"\s+", " ", d.text)[:600]
+        items.append(f"[{i}] {text}")
+    prompt = f"问题：{query}\n\n候选片段：\n" + "\n".join(items)
+    try:
+        raw = invoke_json([
+            {"role": "system", "content": _RERANK_SYSTEM},
+            {"role": "user", "content": prompt},
+        ], temperature=0.0)
+        order = raw.get("rank") or []
+        # 按原始编号重排，保留 (原始编号, doc) 以支持相关度过滤
+        reordered: list[tuple[int, RetrievedDoc]] = []
+        seen: set[int] = set()
+        for x in order:
+            try:
+                i = int(x)
+            except Exception:
+                continue
+            if 0 <= i < len(docs) and i not in seen:
+                reordered.append((i, docs[i]))
+                seen.add(i)
+        for i, d in enumerate(docs):
+            if i not in seen:
+                reordered.append((i, d))
+        # 相关度过滤：模型明确给了 relevant 字段就按它过滤（空列表 = 全部无关，丢弃）；
+        # 字段缺失才视为未判定，全保留（优雅降级）。
+        relevant_field = raw.get("relevant")
+        if relevant_field is not None:
+            rel_set: set[int] = set()
+            for x in relevant_field:
+                try:
+                    rel_set.add(int(x))
+                except Exception:
+                    continue
+            reordered = [(i, d) for i, d in reordered if i in rel_set]
+        return [d for _, d in reordered]
+    except Exception:
+        return docs
+
+
+def _jaccard(a: str, b: str) -> float:
+    sa = set(_tokenize(a))
+    sb = set(_tokenize(b))
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / len(sa | sb)
+
+
+def _dedup(docs: list[RetrievedDoc], threshold: float) -> list[RetrievedDoc]:
+    """近重复去重：与已保留片段 token 相似度过高的丢弃，保证 top-k 覆盖更多角度。"""
+    if not threshold or threshold <= 0 or len(docs) <= 1:
+        return docs
+    kept: list[RetrievedDoc] = []
+    kept_sets: list[set] = []
+    for d in docs:
+        s = set(_tokenize(d.text))
+        if any(len(s & ks) / max(len(s | ks), 1) >= threshold for ks in kept_sets):
+            continue
+        kept.append(d)
+        kept_sets.append(s)
+    return kept
+
+
+def _rerank(query: str, docs: list[RetrievedDoc], top_k: int, enabled: bool) -> list[RetrievedDoc]:
+    threshold = float(_R.get("dedup_similarity", 0) or 0)
+    if not (enabled and len(docs) > top_k):
+        return _dedup(docs, threshold)[:top_k]
+    top_n = min(_R.get("rerank_candidates", 20), len(docs))
+    ordered = _llm_rerank(query, docs[:top_n])
+    return _dedup(ordered, threshold)[:top_k]
+
 
 def retrieve(query: str, library: str | None = None, filters: dict | None = None,
              top_k: int | None = None, rewrite: bool = True) -> list[RetrievedDoc]:
-    if rewrite:
-        query = rewrite_query(query)
+    queries = expand_queries(query) if rewrite else [query]
+    intent = {}
+    if rewrite and _R.get("use_metadata_boost") and api_key_ready():
+        intent = extract_intent(query)
+    do_rerank = rewrite and bool(_R.get("rerank")) and api_key_ready()
 
     if library in ("private", "public", "composition"):
         k = top_k or (_R["private_top_k"] if library == "private" else _R["public_top_k"])
-        return _retrieve_single(library, query, filters, k)
+        docs = _recall_library(library, queries, filters, k, intent)
+        return _rerank(query, docs, k, do_rerank)
 
     k_priv = top_k or _R["private_top_k"]
     k_pub = _R["public_top_k"]
-    priv = _retrieve_single("private", query, filters, k_priv)
-    pub = _retrieve_single("public", query, filters, k_pub)
+    priv = _recall_library("private", queries, filters, k_priv, intent)
+    pub = _recall_library("public", queries, filters, k_pub, intent)
+    priv = _rerank(query, priv, k_priv, do_rerank)
+    pub = _rerank(query, pub, k_pub, do_rerank)
     # 私有库加权后与公共库合并排序（private_weight > 1 表示私有优先）
     pw = float(_R.get("private_weight", 1.0))
     for d in priv:
         d.score *= pw
     merged = sorted(priv + pub, key=lambda d: -d.score)
     return merged[:top_k] if top_k else merged
+
+
+def reembed_library(library: str | None = None) -> int:
+    """对已有文档重新做「上下文嵌入」（contextualize 后重算向量），一次迁移。
+
+    只重算向量，文本/元数据/ids 均不变（upsert 覆盖）。开启 contextualize 后，
+    旧文档的稠密向量仍是裸文本，需调用本函数一次让它们也吃到上下文红利。
+    返回重嵌入的切片总数。
+    """
+    libs = [library] if library else list(LIBRARY_COLLECTION.keys())
+    total = 0
+    for lib in libs:
+        data = get_all_documents(lib)
+        ids = data.get("ids") or []
+        texts = data.get("documents") or []
+        metas = data.get("metadatas") or []
+        if not ids:
+            continue
+        embs = embed_documents([contextualize(t, m or {}) for t, m in zip(texts, metas)])
+        upsert_chunks(lib, ids, texts, embs, metas)
+        rebuild_index(lib)
+        total += len(ids)
+    return total

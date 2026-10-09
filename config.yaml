@@ -69,7 +69,7 @@ llm:
   max_retries: 3
 
 embedding:
-  model_name: BAAI/bge-base-zh-v1.5
+  model_name: models/bge-base-zh-v1.5   # 相对路径（相对项目根目录），整包拷贝后仍能加载
   # device: auto -
   device: auto
   query_instruction: "为这个句子生成表示以用于检索相关文章："
@@ -81,6 +81,15 @@ retrieval:
   rrf_k: 60           # RRF 融合参数
   private_weight: 1.2 # 私有库在最终排序中的加权（>1 表示私有优先）
   authority_boost: 0.15  # 权威相对加成系数：final = rrf * (1 + (权重-1)*系数)，1~5 档约放大 1.0~1.6 倍
+  rerank: true            # 用 DeepSeek flash 对候选做相关性精排（无 key/失败时自动回退 RRF 排序）
+  rerank_candidates: 20   # 送入精排的候选条数
+  multiquery: 3           # 查询扩展的检索短语条数（含原查询）
+  use_metadata_boost: true  # 检索时按 篇目/学段/知识点 元数据加权
+  contextualize: true     # 嵌入/BM25 时把 篇目/学段/知识点 前置拼进文本（上下文检索）
+  dedup_similarity: 0.8   # 近重复片段去重阈值（Jaccard 0~1，0 关闭）
+
+generation:
+  verify_grounding: true  # 写教案生成后做引用接地自检，标出未落到检索材料的结论
 
 chunking:
   max_chunk_chars: 450   # 兜底切片的块大小（对齐 bge-base-zh 512 token 上限，避免向量被截断/稀释）

@@ -3,12 +3,22 @@
 
 # 运行时产物
 data/
+
+# 本地向量模型（体积大，用 scripts/download_model.py 下载，不入库）
+models/
+
 __pycache__/
 *.pyc
 .venv/
 venv/
 
-# 入库目录里的源文件
+# 临时下载目录
+_tmp_dl/
+
+# setup.bat 的安装完成标记
+_setup_ok.txt
+
+# 入库目录里的源文件（如需入库资料进 git，去掉下面注释即可）
 # ingest/private/*
 # ingest/public/*
 # !ingest/private/.gitkeep

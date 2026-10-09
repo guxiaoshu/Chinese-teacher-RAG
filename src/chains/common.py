@@ -16,12 +16,20 @@ def build_context(docs: list[RetrievedDoc]) -> tuple[str, list[dict]]:
     parts: list[str] = []
     citations: list[dict] = []
     for i, d in enumerate(docs, 1):
-        parts.append(f"[{i}] 来源：{d.source_label()}｜类型：{d.doc_type}\n{d.text}")
+        article = (d.meta.get("article") or "").strip()
+        label = f"[{i}] 来源：{d.source_label()}｜类型：{d.doc_type}"
+        if article:
+            label += f"｜篇目：{article}"
+        parts.append(f"{label}\n{d.text}")
         citations.append({
             "index": i,
             "source_file": d.source_file,
             "library": d.library,
             "doc_type": d.doc_type,
+            "score": round(float(d.score), 3),
+            "authority": d.meta.get("authority", ""),
+            "grade": d.meta.get("grade", ""),
+            "article": d.meta.get("article", ""),
         })
     return "\n\n---\n\n".join(parts), citations
 

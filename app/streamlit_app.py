@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import sys
 import re
+import hashlib
+import base64
+from io import BytesIO
 from pathlib import Path
+
+from PIL import Image
 
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
@@ -14,17 +19,27 @@ from src.config import PRIVATE_DIR, PUBLIC_DIR, COMPOSITION_DIR, api_key_ready, 
 from src.chunking import chunk_for
 from src.ingestion.loader import extract_text
 from src.ingestion.composition import import_reference
-from src.ingestion.generated import preview_generated_chunks, save_generated_selected
+from src.ingestion.generated import preview_generated_chunks, save_generated_selected, save_corrected, record_feedback
 from src.ingestion.state import init_db, list_files, count_by_library
 from src.ingestion.watcher import IngestWatcher, scan_existing
 from src.vectorstore.store import count_documents
 from src.retrieval.retriever import rebuild_index
 from src.llm.embeddings import embed_query
 from src.pipeline import process_file
-from src.chains import lesson_plan, exam, qa, learning_analysis, essay, ppt
-from src.memory import load as load_memory, save as save_memory
+from src.chains import lesson_plan, exam, qa, learning_analysis, essay, ppt, chat
+from src.memory import load as load_memory, save as save_memory, SCOPES as MEMORY_SCOPES
 
-st.set_page_config(page_title="语文教学 RAG 助手", page_icon="📚", layout="wide")
+def _favicon_data_uri() -> str:
+    """把北鱼读书图标编码成 data URI 直接当浏览器 favicon。
+
+    用 data URI 而不是传 PIL 图：不经过 Streamlit 的 media 服务，浏览器直接读内嵌数据，
+    避免 favicon 不更新/不显示的问题。
+    """
+    buf = BytesIO()
+    Image.open(_ROOT / "images" / "beiyu.png").convert("RGB").save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+st.set_page_config(page_title="语文教学 RAG 助手", page_icon=_favicon_data_uri(), layout="wide")
 
 init_db()
 
@@ -82,7 +97,41 @@ def _render_citations(citations: list[dict]) -> None:
     with st.expander(f"📎 引用来源（{len(citations)} 条）"):
         for c in citations:
             lib = {"private": "🟢 私有知识库", "composition": "🟠 作文库"}.get(c["library"], "🔵 公共基准库")
-            st.markdown(f"**[{c['index']}]** {lib} · `{c['source_file']}` · {c['doc_type']}")
+            extra = []
+            if c.get("authority"):
+                extra.append(f"权威：{c['authority']}")
+            if c.get("score") is not None:
+                extra.append(f"检索分：{c['score']}")
+            if c.get("grade"):
+                extra.append(f"学段：{c['grade']}")
+            if c.get("article"):
+                extra.append(f"篇目：{c['article']}")
+            suffix = " · " + " · ".join(extra) if extra else ""
+            st.markdown(f"**[{c['index']}]** {lib} · `{c['source_file']}` · {c['doc_type']}{suffix}")
+
+
+def _render_feedback(scenario: str, query: str, content: str) -> None:
+    """👍/👎 反馈 + 编辑后重新入库（修正版成为高权威私有资料）。"""
+    nonce = hashlib.sha256((scenario + content).encode("utf-8")).hexdigest()[:8]
+    fb1, fb2, fb3 = st.columns([1, 1, 6])
+    if fb1.button("👍", key=f"fb_up_{nonce}", help="这个结果不错"):
+        record_feedback(query, content, "up")
+        st.toast("已记录 👍")
+    if fb2.button("👎", key=f"fb_down_{nonce}", help="这个结果需要改进"):
+        record_feedback(query, content, "down")
+        st.toast("已记录 👎")
+    with st.expander("✏️ 编辑后重新入库（改好后作为高权威私有资料，下次优先召回）", expanded=False):
+        corrected = st.text_area("修正版", value=content, height=260, key=f"correct_{nonce}", label_visibility="collapsed")
+        if st.button("✅ 保存修正版到私有库", key=f"commit_correct_{nonce}"):
+            if not (corrected or "").strip():
+                st.warning("内容为空，未保存")
+            else:
+                with st.spinner("正在把修正版作为高权威资料入库…"):
+                    ok = save_corrected(scenario, query, corrected)
+                if ok:
+                    st.success("✅ 已作为高权威资料入库，下次检索会优先命中")
+                else:
+                    st.error("入库失败")
 
 
 def _chunk_review(scenario: str, query: str, content: str) -> None:
@@ -116,13 +165,22 @@ def _chunk_review(scenario: str, query: str, content: str) -> None:
                 else:
                     st.error("入库失败")
 
-def _current_memory() -> str:
-    """右侧「希望我记住什么？」框当前内容（用于注入生成）。"""
+def _current_memory(feature: str) -> str:
+    """右侧「希望我记住什么？」框当前内容；只在该 feature 对应按钮点亮时注入。"""
+    scopes = st.session_state.get("memory_scopes")
+    if scopes is not None and not scopes.get(feature, True):
+        return ""
     return (st.session_state.get("remember_memory_editor") or "").strip()
 
 
 with st.sidebar:
-    st.title("📚 语文教学 RAG 助手")
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:10px'>"
+        f"<img src='{_favicon_data_uri()}' width='42' style='border-radius:8px;flex-shrink:0'>"
+        f"<span style='font-size:1.6rem;font-weight:700;line-height:1.2'>语文教学 RAG 助手</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     if api_key_ready():
         st.success("DeepSeek API 已就绪")
@@ -184,20 +242,117 @@ main_col, mem_col = st.columns([5, 2], gap="large")
 with mem_col:
     st.markdown("#### 🧠 希望我记住什么？")
     st.caption("写在这里的长期上下文会注入「写教案 / 出题 / 答疑 / 学情分析」的生成；作文批改不读取。改完点「保存」即可长期保留。")
+    if "memory_scopes" not in st.session_state:
+        st.session_state["memory_scopes"] = {s: s in load_memory()["scopes"] for s in MEMORY_SCOPES}
     st.text_area(
         "长期记忆",
-        value=load_memory(),
+        value=load_memory()["text"],
         key="remember_memory_editor",
         height=400,
         label_visibility="collapsed",
         placeholder="例如：我班是八年级，学生文言文基础偏弱；板书偏好思维导图式；喜欢用生活例子导入；讲古文习惯先疏通字词再品情感。",
     )
+    st.markdown(
+        """
+        <style>
+        /* 生效范围开关：绿=生效，白=不生效 */
+        .st-key-mem_scope_0 button, .st-key-mem_scope_1 button,
+        .st-key-mem_scope_2 button, .st-key-mem_scope_3 button {
+            border-radius: 0.5rem;
+            font-weight: 600;
+        }
+        .st-key-mem_scope_0 button[data-testid="stBaseButton-primary"],
+        .st-key-mem_scope_1 button[data-testid="stBaseButton-primary"],
+        .st-key-mem_scope_2 button[data-testid="stBaseButton-primary"],
+        .st-key-mem_scope_3 button[data-testid="stBaseButton-primary"] {
+            background-color: #28a745 !important;
+            border: 1px solid #28a745 !important;
+            color: #ffffff !important;
+        }
+        .st-key-mem_scope_0 button[data-testid="stBaseButton-secondary"],
+        .st-key-mem_scope_1 button[data-testid="stBaseButton-secondary"],
+        .st-key-mem_scope_2 button[data-testid="stBaseButton-secondary"],
+        .st-key-mem_scope_3 button[data-testid="stBaseButton-secondary"] {
+            background-color: #ffffff !important;
+            border: 1px solid #d0d0d0 !important;
+            color: #333333 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption("生效范围（绿色 = 生效，白色 = 不生效）：")
+    cols = st.columns(2)
+    for idx, s in enumerate(MEMORY_SCOPES):
+        lit = bool(st.session_state["memory_scopes"].get(s, True))
+        if cols[idx % 2].button(
+            s, key=f"mem_scope_{idx}", use_container_width=True,
+            type="primary" if lit else "secondary",
+        ):
+            st.session_state["memory_scopes"][s] = not lit
+            st.rerun()
     if st.button("💾 保存长期记忆", key="remember_save", use_container_width=True):
-        save_memory(st.session_state["remember_memory_editor"])
+        save_memory(
+            st.session_state["remember_memory_editor"],
+            [s for s in MEMORY_SCOPES if st.session_state["memory_scopes"].get(s)],
+        )
         st.toast("✅ 已保存长期记忆")
         st.rerun()
 
 with main_col:
+    # —— 临时聊：独立框，可折叠，固定在「写教案」上面 ——
+    with st.container(border=True):
+        icon_col, title_col, toggle_col = st.columns([0.07, 0.73, 0.20], vertical_alignment="center")
+        with icon_col:
+            st.image(str(_ROOT / "images" / "deepseek.png"), width=36)
+        with title_col:
+            st.subheader("临时聊")
+        with toggle_col:
+            if "chat_open" not in st.session_state:
+                st.session_state["chat_open"] = True
+            if st.button("收起 ▲" if st.session_state["chat_open"] else "展开 ▼", key="chat_toggle", use_container_width=True):
+                st.session_state["chat_open"] = not st.session_state["chat_open"]
+                st.rerun()
+
+        if st.session_state["chat_open"]:
+            st.caption("不检索知识库、不沉淀入库，直接和 DeepSeek 多轮聊，像网页版一样。刷新页面即清空历史。")
+
+            if "chat_history" not in st.session_state:
+                st.session_state["chat_history"] = []
+
+            c1, c2 = st.columns([4, 1])
+            with c1:
+                use_reason = st.checkbox(
+                    "用推理模型（更深，但更慢）", value=False, key="chat_reason",
+                    help="勾选走 reason_model（适合需要推理的难题）；不勾用默认快模型。",
+                )
+            with c2:
+                if st.button("🗑 清空对话", key="chat_clear", use_container_width=True):
+                    st.session_state["chat_history"] = []
+                    st.rerun()
+
+            for m in st.session_state["chat_history"]:
+                with st.chat_message(m["role"]):
+                    st.markdown(m["content"])
+
+            prompt = st.chat_input("随便问点什么，比如：帮我写一份家长会通知…")
+            if prompt:
+                if not api_key_ready():
+                    st.error("请先在 .env 填写真实 API key")
+                else:
+                    st.session_state["chat_history"].append({"role": "user", "content": prompt})
+                    with st.chat_message("user"):
+                        st.markdown(prompt)
+                    with st.chat_message("assistant"):
+                        try:
+                            answer = st.write_stream(chat.stream(st.session_state["chat_history"], use_reason=use_reason))
+                        except Exception as e:
+                            answer = f"出错了：{e}"
+                            st.error(answer)
+                    st.session_state["chat_history"].append({"role": "assistant", "content": answer})
+
+    st.divider()
+
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["✍️ 写教案", "📝 出题", "💬 答疑", "📊 学情分析", "🖊 作文批改", "📽 生成 PPT", "🗂 文件管理", "🔬 切分调试"])
 
 with tab1:
@@ -209,10 +364,13 @@ with tab1:
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("检索私有库 + 生成教案中（推理模型较慢，请稍候）…"):
-                res = lesson_plan.run(q, save=False, memory=_current_memory())
+                res = lesson_plan.run(q, save=False, memory=_current_memory("写教案"))
             st.markdown(res.content)
+            if res.data and res.data.get("grounding_warning"):
+                st.markdown(res.data["grounding_warning"])
             _render_citations(res.citations)
             _chunk_review("写教案", q, res.content)
+            _render_feedback("写教案", q, res.content)
 
 with tab2:
     st.header("针对性出题")
@@ -223,10 +381,11 @@ with tab2:
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("检索私有错题库 + 命题中…"):
-                res = exam.run(q, save=False, memory=_current_memory())
+                res = exam.run(q, save=False, memory=_current_memory("出题"))
             st.markdown(res.content)
             _render_citations(res.citations)
             _chunk_review("出题", q, res.content)
+            _render_feedback("出题", q, res.content)
 
 with tab3:
     st.header("启发式答疑")
@@ -237,10 +396,11 @@ with tab3:
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("检索老师过往资料 + 生成启发式回复…"):
-                res = qa.run(q, save=False, memory=_current_memory())
+                res = qa.run(q, save=False, memory=_current_memory("答疑"))
             st.markdown(res.content)
             _render_citations(res.citations)
             _chunk_review("答疑", q, res.content)
+            _render_feedback("答疑", q, res.content)
 
 with tab4:
     st.header("学情沉淀")
@@ -251,10 +411,11 @@ with tab4:
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("分析私有错题中…"):
-                res = learning_analysis.run(q, save=False, memory=_current_memory())
+                res = learning_analysis.run(q, save=False, memory=_current_memory("学情分析"))
             st.markdown(res.content)
             _render_citations(res.citations)
             _chunk_review("学情分析", q, res.content)
+            _render_feedback("学情分析", q, res.content)
 
 with tab5:
     st.header("🖊 作文批改")

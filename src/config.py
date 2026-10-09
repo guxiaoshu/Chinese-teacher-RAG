@@ -18,6 +18,11 @@ def load_config() -> dict:
 
 CONFIG = load_config()
 
+# 向量模型路径：允许填相对路径（相对项目根目录），自动解析成绝对路径，整包拷贝到别处也能加载
+_model_name = CONFIG["embedding"]["model_name"]
+if not Path(_model_name).is_absolute():
+    CONFIG["embedding"]["model_name"] = str((BASE_DIR / _model_name).resolve())
+
 DATA_DIR = BASE_DIR / CONFIG["paths"]["data_dir"]
 CHROMA_DIR = BASE_DIR / CONFIG["paths"]["chroma_dir"]
 DB_PATH = BASE_DIR / CONFIG["paths"]["sqlite_db"]

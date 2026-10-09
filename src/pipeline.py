@@ -18,7 +18,7 @@ from .tagging.classifier import classify
 from .chunking import chunk_for
 from .llm.embeddings import embed_documents
 from .vectorstore.store import upsert_chunks, delete_by_source_hash
-from .retrieval.retriever import rebuild_index
+from .retrieval.retriever import rebuild_index, contextualize
 
 def detect_library(path: Path | str) -> str:
     rp = Path(path).resolve()
@@ -113,7 +113,7 @@ def process_file(path: Path | str) -> dict:
             texts.append(c.text)
             metas.append(build_meta(p, library, sha, tags, c.meta, i))
 
-        embs = embed_documents(texts)
+        embs = embed_documents([contextualize(t, m) for t, m in zip(texts, metas)])
         upsert_chunks(library, ids, texts, embs, metas)
         rebuild_index(library)
         mark_processed(p, sha, library, len(texts), tags.doc_type, tags.to_metadata())
