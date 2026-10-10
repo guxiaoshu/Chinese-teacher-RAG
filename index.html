@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>语文教学 RAG 助手 — 交互原型 v2</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --panel:#fff; --border:#e3e6ea; --text:#1f2329; --muted:#6b7280; --faint:#9aa3ad;
+    --green:#2f7d5b; --green-bg:#eaf4ef;
+    --blue:#3b6fd6;  --blue-bg:#e9effb;
+    --orange:#c2701d; --orange-bg:#fbf0e4;
+    --amber:#b98a0a; --amber-bg:#faf3dd;
+    --radius:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);display:flex;justify-content:center;padding:20px;
+       font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.65}
+  .app{display:grid;grid-template-columns:250px 1fr 240px;width:1480px;max-width:100%;height:940px;
+       background:var(--panel);border:1px solid var(--border);border-radius:16px;overflow:hidden;
+       box-shadow:0 10px 34px rgba(0,0,0,.07)}
+
+  /* ---------- 通用 ---------- */
+  .sec{font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.5px}
+  .caption{font-size:12.5px;color:var(--muted);margin:4px 0 12px}
+  .tag{font-size:11px;padding:2px 8px;border-radius:99px;color:#fff;font-weight:600}
+  .tag.pv{background:var(--green)} .tag.pb{background:var(--blue)} .tag.cp{background:var(--orange)}
+  .badge{font-size:10px;padding:1px 7px;border-radius:4px;color:#fff;flex-shrink:0}
+  .badge.pv{background:var(--green)} .badge.pb{background:var(--blue)} .badge.cp{background:var(--orange)}
+  button{font-family:inherit}
+
+  /* ---------- 左侧栏 ---------- */
+  .sidebar{background:#fafbfc;border-right:1px solid var(--border);padding:20px 16px;
+           display:flex;flex-direction:column;gap:18px;overflow-y:auto}
+  .brand{font-size:16px;font-weight:700;display:flex;align-items:center;gap:9px}
+  .brand .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--green),#57a37f);
+               color:#fff;display:flex;align-items:center;justify-content:center;font-size:17px}
+  .api{font-size:13px;color:var(--green);background:var(--green-bg);padding:8px 12px;border-radius:9px;
+       display:flex;align-items:center;gap:6px}
+  .statcard{border:1px solid var(--border);border-radius:10px;padding:12px;font-size:13px;margin-top:8px;background:#fff}
+  .statcard .row{display:flex;justify-content:space-between;align-items:center}
+  .statcard .row + .row{margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+  .statcard .num{font-weight:700;font-size:16px}
+  .drop{border:1.5px dashed var(--border);border-radius:10px;padding:20px 12px;text-align:center;
+        color:var(--muted);font-size:13px;background:#fff;margin-top:8px}
+  .drop b{color:var(--green)}
+  .switch{display:flex;gap:8px;margin-top:8px}
+  .switch button{flex:1;padding:8px 4px;font-size:12.5px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer}
+  .switch button.on{background:var(--green-bg);border-color:var(--green);color:var(--green);font-weight:600}
+  .btn{border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:13px}
+  .scan{margin-top:8px;width:100%;padding:9px;color:var(--text)}
+  .scan:hover{background:#f4f6f7}
+
+  /* ---------- 右侧长期记忆 ---------- */
+  .memory{background:#fff;border-left:1px solid var(--border);padding:20px 16px;display:flex;flex-direction:column;gap:14px;overflow-y:auto}
+  .memory h4{font-size:15px}
+  .memory textarea{width:100%;height:360px;border:1px solid var(--border);border-radius:10px;padding:12px;font-size:13px;
+                    resize:none;outline:none;font-family:inherit;line-height:1.7}
+  .memory textarea:focus{border-color:var(--green)}
+  .scope-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .scope{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:8px 10px;border:1px solid var(--border);
+         border-radius:8px;font-size:12.5px;cursor:pointer;background:#fff;color:var(--text)}
+  .scope.on{background:var(--green-bg);border-color:var(--green);color:var(--green);font-weight:600}
+  .scope .light{width:8px;height:8px;border-radius:50%;background:#d0d4d9}
+  .scope.on .light{background:var(--green)}
+  .save{width:100%;padding:10px;background:var(--green);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer}
+
+  /* ---------- 主区 ---------- */
+  main{display:flex;flex-direction:column;min-width:0;background:#fff}
+  .chat-zone{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:16px}
+  .chatbox{border:1px solid var(--border);border-radius:12px;overflow:hidden;flex-shrink:0}
+  .chatbox-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:#fff}
+  .chatbox-head .ic{width:30px;height:30px;border-radius:8px;background:var(--blue-bg);display:flex;align-items:center;justify-content:center;font-size:16px}
+  .chatbox-head .ttl{font-weight:700;font-size:15px;flex:1}
+  .chatbox-head .sub{font-size:12px;color:var(--muted)}
+  .chip{font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:99px;background:#fff;color:var(--muted);cursor:pointer;white-space:nowrap}
+  .chatbody{padding:14px 16px;background:#fafbfc;display:flex;flex-direction:column;gap:12px}
+  .bubble{max-width:78%;padding:10px 14px;border-radius:12px;font-size:13.5px}
+  .bubble.u{align-self:flex-end;background:var(--blue);color:#fff;border-bottom-right-radius:4px}
+  .bubble.a{align-self:flex-start;background:#fff;border:1px solid var(--border);border-bottom-left-radius:4px}
+  .chatinput{display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);background:#fff}
+  .chatinput input{flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:9px;font-size:13.5px;outline:none}
+  .chatinput button{padding:0 18px;background:var(--blue);color:#fff;border:none;border-radius:9px;font-size:13.5px;cursor:pointer;font-weight:600}
+
+  /* ---------- 标签页 ---------- */
+  .tabs{display:flex;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:#fff;padding:0 6px;flex-shrink:0;overflow-x:auto}
+  .tab{padding:13px 14px;font-size:13.5px;color:var(--muted);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+  .tab.active{color:var(--green);border-bottom-color:var(--green);font-weight:700}
+  .panel{display:none;flex-direction:column;gap:14px;padding:18px 24px}
+  .panel.active{display:flex}
+  .panel h2{font-size:17px}
+
+  /* ---------- 消息 / 引用 ---------- */
+  .round{display:flex;flex-direction:column;gap:12px}
+  .msg{max-width:94%;padding:13px 16px;border-radius:12px;font-size:13.5px}
+  .msg.user{align-self:flex-end;background:var(--green);color:#fff;border-bottom-right-radius:4px}
+  .msg.ai{align-self:flex-start;background:#f7f9f8;border:1px solid var(--border);border-bottom-left-radius:4px;min-width:70%}
+  .msg.ai h3{font-size:15px;margin-bottom:8px}
+  .msg.ai p{margin:6px 0}
+  .msg.ai ul{padding-left:18px;margin:4px 0}
+  .cite{display:inline-block;font-size:10.5px;color:var(--green);background:var(--green-bg);padding:1px 5px;border-radius:5px;margin:0 2px;vertical-align:super}
+  .cite.pb{color:var(--blue);background:var(--blue-bg)}
+  .refs{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+  .refs .h{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}
+  .refs .item{font-size:12px;color:var(--muted);padding:4px 0;display:flex;gap:8px;align-items:center}
+  .refs .item .extra{font-size:11px;color:var(--faint)}
+
+  /* ---------- 反馈 / 入库 ---------- */
+  .tools{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .fb{font-size:12.5px;padding:4px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer}
+  .fb:hover{background:#f4f6f7}
+  .expander{width:100%;border:1px solid var(--border);border-radius:9px;background:#fff;font-size:13px;overflow:hidden}
+  .expander summary{cursor:pointer;padding:9px 12px;font-weight:600;color:var(--text);background:#fafbfc}
+  .expander .inner{padding:12px;border-top:1px solid var(--border)}
+  .expander .inner textarea{width:100%;min-height:150px;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;resize:vertical;outline:none}
+  .expander .commit{margin-top:10px;padding:8px 16px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:600}
+  .chk{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px dashed var(--border);font-size:12.5px}
+  .chk:last-child{border-bottom:none}
+  .chk input{margin-top:3px}
+  .chk .n{color:var(--muted)}
+
+  /* ---------- 输入区（各 tab 底部固定） ---------- */
+  .gen{background:#fafbfc;border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+  .gen textarea{width:100%;min-height:70px;border:1px solid var(--border);border-radius:9px;padding:10px;font-size:13.5px;resize:vertical;outline:none;font-family:inherit}
+  .gen textarea:focus{border-color:var(--green)}
+  .gen .row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .gen label{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer}
+  .gen .go{margin-left:auto;padding:9px 22px;background:var(--green);color:#fff;border:none;border-radius:9px;font-size:13.5px;font-weight:600;cursor:pointer}
+  .field{display:flex;flex-direction:column;gap:4px}
+  .field label{font-size:12px;color:var(--muted)}
+  .field input,.field select{width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:13.5px;outline:none;background:#fff}
+
+  /* ---------- 指标 / 表格 ---------- */
+  .metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+  .metric{background:#fafbfc;border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center}
+  .metric .v{font-size:20px;font-weight:700}
+  .metric .k{font-size:11.5px;color:var(--muted);margin-top:2px}
+  table.files{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.files th,table.files td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left}
+  table.files th{color:var(--muted);font-weight:600;background:#fafbfc}
+  .ok{color:var(--green);font-weight:600}
+  .warn{color:var(--orange);font-weight:600}
+  .dl{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;background:var(--green);color:#fff;border:none;border-radius:9px;font-size:13.5px;font-weight:600;cursor:pointer}
+  .success{background:var(--green-bg);border:1px solid var(--green);color:var(--green);padding:10px 14px;border-radius:9px;font-size:13px}
+  .tip{background:var(--amber-bg);border:1px solid #ecd9a0;color:#8a6d1a;padding:9px 12px;border-radius:8px;font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ================= 左侧栏 ================= -->
+  <aside class="sidebar">
+    <div class="brand"><span class="logo">🐟</span>语文教学 RAG 助手</div>
+    <div class="api">✓ DeepSeek API 已就绪</div>
+
+    <div>
+      <div class="sec">知识库统计</div>
+      <div class="statcard">
+        <div class="row"><span><span class="tag pv">私有</span> 私有知识库</span><span class="num">128<span style="font-size:12px;color:var(--muted)"> 切片 / 23 文件</span></span></div>
+        <div class="row"><span><span class="tag pb">公共</span> 公共基准库</span><span class="num">456<span style="font-size:12px;color:var(--muted)"> 切片 / 41 文件</span></span></div>
+        <div class="row"><span><span class="tag cp">作文</span> 作文库</span><span class="num">32<span style="font-size:12px;color:var(--muted)"> 篇</span></span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec">📥 上传入库</div>
+      <div class="drop">拖入文件到此处<br><b>PDF / TXT / DOCX / DOC</b></div>
+      <div class="switch">
+        <button class="on" data-lib="pv">🟢 私有知识库</button>
+        <button data-lib="pb">🔵 公共基准库</button>
+      </div>
+      <button class="btn scan">🔍 扫描现有文件</button>
+      <button class="btn scan">🔄 重建索引</button>
+    </div>
+
+    <div style="font-size:11.5px;color:var(--faint)">也可以直接把文件拖进项目里的 <code>ingest/private</code> 或 <code>ingest/public</code> 文件夹，会自动入库。</div>
+  </aside>
+
+  <!-- ================= 主区 ================= -->
+  <main>
+
+    <div class="chat-zone" id="chatZone">
+
+      <!-- 临时聊 -->
+      <div class="chatbox" id="chatbox">
+        <div class="chatbox-head">
+          <span class="ic">💬</span>
+          <span class="ttl">临时的聊天，解决一些零碎问题</span>
+          <span class="chip" id="chatToggle">收起 ▲</span>
+        </div>
+        <div id="chatBodyWrap">
+          <div class="chatbody" id="chatBody">
+            <div class="bubble u">帮我写一份家长会通知，语气正式一点</div>
+            <div class="bubble a">好的。这里是通知草稿：<br><br><b>家长会通知</b><br>尊敬的各位家长：<br>……（正文省略）<br><br>如需调整措辞或补充班级信息，告诉我即可。</div>
+            <div class="bubble u">把「务必参加」改得客气一点</div>
+            <div class="bubble a">已改为「诚邀您拨冗出席」。刷新页面即清空历史，这段是临时对话。</div>
+          </div>
+          <div class="chatinput">
+            <input placeholder="随便问点什么，比如：帮我写一份家长会通知…">
+            <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted);white-space:nowrap"><input type="checkbox"> 用推理模型</label>
+            <button id="chatClear">🗑 清空</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 标签页导航 -->
+      <div class="tabs" style="border-radius:12px">
+        <button class="tab active" data-tab="lesson">✍️ 写教案</button>
+        <button class="tab" data-tab="exam">📝 出题</button>
+        <button class="tab" data-tab="qa">💬 答疑</button>
+        <button class="tab" data-tab="analysis">📊 学情分析</button>
+        <button class="tab" data-tab="essay">🖊 作文批改</button>
+        <button class="tab" data-tab="ppt">📽 生成 PPT</button>
+        <button class="tab" data-tab="files">🗂 文件管理</button>
+        <button class="tab" data-tab="debug">🔬 切分调试</button>
+      </div>
+
+      <!-- ===== 写教案 ===== -->
+      <div class="panel active" id="panel-lesson">
+        <div>
+          <h2>针对性备课</h2>
+          <div class="caption">私有库优先召回你往年同篇教案、课堂记录、学生错题 → 公共库补教材课标 → 迭代出新版教案 + 板书 + 课堂预设</div>
+        </div>
+        <div class="gen">
+          <textarea>帮我备《桃花源记》，八年级下册，两课时。优先复用我往年上这篇时的提问和板书框架；这届学生文言虚词「其」「以」易错，写进重难点。</textarea>
+          <div class="row">
+            <label><input type="checkbox"> 用推理模型（更深，但更慢）</label>
+            <button class="go">生成教案</button>
+          </div>
+        </div>
+
+        <div class="round">
+          <div class="msg user">帮我备《桃花源记》，八年级下册，两课时</div>
+          <div class="msg ai">
+            <h3>《桃花源记》教案（八下 · 两课时）</h3>
+            <p>这课主要抓文言字词那几组：「缘、鲜美、妻子、绝境、无论」。尤其「妻子」这种古今异义，学生年年错，要单独拎出来讲<span class="cite">[1]</span></p>
+            <p><b>重难点</b>：古今异义 + 背诵；难点是「桃花源是否真实存在」背后的理想色彩。</p>
+            <p>⚠️ 老毛病：去年「妻子」被当成「老婆」的占六成，今年还得压一压<span class="cite">[2]</span></p>
+            <p><b>第一课时流程</b>：</p>
+            <ul>
+              <li>拿「世外桃源」成语导入，问学生现在用它表达什么</li>
+              <li>正音、把课文读顺</li>
+              <li>精读第一段，逐句过字词</li>
+            </ul>
+            <p>💡 启发式问题链（各标思考角度）：</p>
+            <ul>
+              <li>（现实关联）如果今天有人宣称发现一个「世外桃源」，你会信吗？为什么？</li>
+              <li>（价值观思辨）「不知有汉，无论魏晋」是幸福还是遗憾？</li>
+            </ul>
+            <div class="refs">
+              <div class="h">📎 引用来源（3 条）</div>
+              <div class="item"><span class="badge pv">私有</span> 你的教案_桃花源记_2023.docx <span class="extra">· 教案 · 权威：教师教案</span></div>
+              <div class="item"><span class="badge pv">私有</span> 错题_桃花源记_2025.xlsx <span class="extra">· 学生错题</span></div>
+              <div class="item"><span class="badge pb">公共</span> 部编版教材_八下_桃花源记.pdf <span class="extra">· 教材</span></div>
+            </div>
+            <div class="tools">
+              <button class="fb">👍 这个结果不错</button>
+              <button class="fb">👎 需要改进</button>
+            </div>
+            <details class="expander"><summary>✏️ 编辑后重新入库（改好后作为高权威私有资料）</summary>
+              <div class="inner"><textarea>（修正版正文…）</textarea><button class="commit">✅ 保存修正版到私有库</button></div>
+            </details>
+            <details class="expander"><summary>📥 手动入库：本次切出 6 片，勾选要存进私有库的切片（默认全选）</summary>
+              <div class="inner">
+                <div class="chk"><input type="checkbox" checked><span class="n">切片 1/6 · 412 字 ·</span><span>这课主要抓文言字词那几组：「缘、鲜美、妻子、绝境、无论」…</span></div>
+                <div class="chk"><input type="checkbox" checked><span class="n">切片 2/6 · 388 字 ·</span><span>重难点：古今异义 + 背诵；难点是「桃花源是否真实存在」…</span></div>
+                <div class="chk"><input type="checkbox" checked><span class="n">切片 3/6 · 296 字 ·</span><span>第一课时流程：成语导入 → 正音 → 精读第一段…</span></div>
+                <button class="commit">✅ 入库所选切片</button>
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 出题 ===== -->
+      <div class="panel" id="panel-exam">
+        <div>
+          <h2>针对性出题</h2>
+          <div class="caption">薄弱点必须来自私有错题库；选择题干扰项优先参考学生真实错误作答；对标课标不超纲</div>
+        </div>
+        <div class="gen">
+          <textarea>给《紫藤萝瀑布》出一份 20 分钟随堂练，重点考象征手法与托物言志，每道题附评分细则。</textarea>
+          <div class="row"><button class="go">生成试题</button></div>
+        </div>
+        <div class="round">
+          <div class="msg user">给《紫藤萝瀑布》出 20 分钟随堂练，重点考象征手法</div>
+          <div class="msg ai">
+            <h3>《紫藤萝瀑布》随堂练（20 分钟）</h3>
+            <p>1. 给加点字注音：迸溅（ ）、伶仃（ ）——送分题<span class="cite">[1]</span></p>
+            <p>2. 关于「象征」，下面哪个理解对？<br>A. 直接写藤萝好看　B. 借花写人，由花讲到生命　C. 用藤萝比喻个具体东西　D. 就是单纯夸春天<span class="cite">[2]</span></p>
+            <p>答案：1. bèng jiàn、líng dīng；2. B。选 A/C/D 的，是把「象征」跟「比喻、直接描写」搞混——这几个选项就是从学生错答里扒下来的<span class="cite">[2]</span></p>
+            <div class="refs">
+              <div class="h">📎 引用来源（2 条）</div>
+              <div class="item"><span class="badge pv">私有</span> 错题_象征手法_2025.xlsx <span class="extra">· 学生错题</span></div>
+              <div class="item"><span class="badge pv">私有</span> 学生作答样本_八下_第5周.docx <span class="extra">· 学生作答样本</span></div>
+            </div>
+            <div class="tools"><button class="fb">👍</button><button class="fb">👎</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 答疑 ===== -->
+      <div class="panel" id="panel-qa">
+        <div>
+          <h2>启发式答疑</h2>
+          <div class="caption">优先召回你课堂用过的例子、批注、学生疑问；启发式引导，不直接给完整答案</div>
+        </div>
+        <div class="gen">
+          <textarea>学生问《桃花源记》「乃不知有汉」的「乃」怎么理解。我不想直接讲，想用启发式一步步引他自己推出来。</textarea>
+          <div class="row"><button class="go">开始答疑</button></div>
+        </div>
+        <div class="round">
+          <div class="msg user">学生问「乃不知有汉」的「乃」是什么意思，我该怎么引导？</div>
+          <div class="msg ai">
+            <h3>启发式引导（别直接给答案）</h3>
+            <p>先让他回忆学过的「乃」，比如《论语》里「去后乃至」那个「乃」是「才」<span class="cite">[1]</span></p>
+            <p>再问：这里「乃」当「于是、就」讲通不通？换成「竟然」呢？让他自己比一比，哪种配得上「桃花源人不知外面改朝换代」那股惊讶劲。</p>
+            <p>最后让他自己下结论，你补一句：这里「乃」是「竟然」，表出乎意料。</p>
+            <div class="refs">
+              <div class="h">📎 引用来源（2 条）</div>
+              <div class="item"><span class="badge pv">私有</span> 你的课堂例句_文言虚词_乃.docx <span class="extra">· 课堂笔记</span></div>
+              <div class="item"><span class="badge pb">公共</span> 文言文版_虚词解析.pdf <span class="extra">· 文言笔记</span></div>
+            </div>
+            <div class="tools"><button class="fb">👍</button><button class="fb">👎</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 学情分析 ===== -->
+      <div class="panel" id="panel-analysis">
+        <div>
+          <h2>学情沉淀</h2>
+          <div class="caption">基于私有错题/作答样本，输出某篇目/单元的高频错误、易混淆点与教学建议（越沉淀越强）</div>
+        </div>
+        <div class="gen">
+          <textarea>分析《桃花源记》这一单元学生的整体薄弱点——高频错误、易混淆点、班级共性，并给针对性教学建议。</textarea>
+          <div class="row"><button class="go">生成学情诊断</button></div>
+        </div>
+        <div class="round">
+          <div class="msg user">分析《桃花源记》这一课学生的整体薄弱点</div>
+          <div class="msg ai">
+            <h3>《桃花源记》学情分析</h3>
+            <p><b>高频错误：</b>「妻子」翻译成「老婆」的，这班六成<span class="cite">[1]</span></p>
+            <p><b>易混淆：</b>「绝境」的「境」跟「与世隔绝」的「境」分不清；「不足为外人道也」的「为」读音和意思老分歧<span class="cite">[2]</span></p>
+            <p><b>班级共性：</b>不少学生把「世外桃源」当成真的「躲进山里过日子」，没 get 到理想色彩。</p>
+            <p><b>建议：</b>古今异义（妻子、绝境）重点讲；配一道对比阅读，把「桃源理想」和「避世现实」掰开。</p>
+            <div class="refs">
+              <div class="h">📎 引用来源（2 条）</div>
+              <div class="item"><span class="badge pv">私有</span> 错题_桃花源记_2025.xlsx <span class="extra">· 学生错题</span></div>
+              <div class="item"><span class="badge pv">私有</span> 课堂记录_八下_第3周.md <span class="extra">· 课堂笔记</span></div>
+            </div>
+            <div class="tools"><button class="fb">👍</button><button class="fb">👎</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 作文批改 ===== -->
+      <div class="panel" id="panel-essay">
+        <div>
+          <h2>🖊 作文批改</h2>
+          <div class="caption">高考 60 分制 · ABCDE 五档 · 分项分等（内容/表达/发展），批改后自动沉淀进作文库、按学生追踪写作轨迹</div>
+        </div>
+        <div class="gen">
+          <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px">
+            <div class="field">
+              <label>学生作文全文（粘贴或上传）</label>
+              <textarea style="min-height:150px">坚持，是通往山顶的石阶……（作文正文）</textarea>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div class="field"><label>学生姓名/学号</label><input value="李明（八3班）"></div>
+              <div class="field"><label>作文题目/主题</label><input value="坚持"></div>
+              <div class="field"><label>学段（可选）</label><select><option>八年级上</option><option>八年级下</option></select></div>
+              <label style="font-size:12.5px;color:var(--muted)"><input type="checkbox" checked> 批改后存入作文库</label>
+            </div>
+          </div>
+          <div class="row"><button class="go">开始批改</button></div>
+        </div>
+        <div class="metrics">
+          <div class="metric"><div class="v">52</div><div class="k">总分 /60</div></div>
+          <div class="metric"><div class="v">B</div><div class="k">档次</div></div>
+          <div class="metric"><div class="v">17</div><div class="k">内容 /20</div></div>
+          <div class="metric"><div class="v">18</div><div class="k">表达 /20</div></div>
+          <div class="metric"><div class="v">17</div><div class="k">发展 /20</div></div>
+        </div>
+        <div class="msg ai">
+          <h3>批改评语</h3>
+          <p><b>内容（17/20）</b>：立意明确，围绕「坚持」展开；但第二个论据略空。</p>
+          <p><b>表达（18/20）</b>：语言通顺，个别长句可拆短。</p>
+          <p><b>发展（17/20）</b>：有联想，但深度可再挖一层——可对比「坚持」与「偏执」的界限。</p>
+          <div class="refs">
+            <div class="h">📎 引用来源（1 条）</div>
+            <div class="item"><span class="badge cp">作文</span> 李明_坚持_2026-10-08.docx <span class="extra">· 该生上一篇 48/B-</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 生成 PPT ===== -->
+      <div class="panel" id="panel-ppt">
+        <div>
+          <h2>📽 生成 PPT</h2>
+          <div class="caption">输入主题 → 检索教案资料 → 智能设计引擎生成 .pptx：多风格 / 多版式 / AI 配图 / 自检</div>
+        </div>
+        <div class="gen">
+          <textarea>帮我做《小石潭记》第一课时的课件 PPT，突出「移步换景」的写景顺序和由乐到悲的情感变化，要有原文金句页和两栏对比页。</textarea>
+          <div class="row">
+            <label><input type="checkbox" checked> AI 配图</label>
+            <div class="field" style="flex:1"><label>输出文件夹</label><input value="data/ppt_output"></div>
+            <button class="go">生成 PPT</button>
+          </div>
+        </div>
+        <div class="success">✅ 已生成 14 页内容 + 封面（风格：水墨 · 已配 AI 图 · 自检调整 2 处），存于 data/ppt_output/小石潭记_第一课时.pptx</div>
+        <div style="display:flex;gap:10px;align-items:center"><button class="dl">⬇️ 下载 PPT 文件</button><span style="font-size:12.5px;color:var(--muted)">小石潭记_第一课时.pptx · 2.4 MB</span></div>
+        <div class="msg ai">
+          <h3>课件大纲（14 页）</h3>
+          <ul>
+            <li>封面 + 目标</li>
+            <li>作者与背景 → 朗读正音</li>
+            <li>「移步换景」写景顺序（原文金句页）</li>
+            <li>由乐到悲的情感变化（两栏对比页：乐 ↔ 悲）</li>
+            <li>「凄神寒骨」深意 + 课堂小结</li>
+          </ul>
+          <div class="refs">
+            <div class="h">📎 引用来源（3 条）</div>
+            <div class="item"><span class="badge pv">私有</span> 你的教案_小石潭记_2024.docx</div>
+            <div class="item"><span class="badge pb">公共</span> 部编版教材_八下_小石潭记.pdf</div>
+            <div class="item"><span class="badge pv">私有</span> 板书_移步换景_2024.png</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 文件管理 ===== -->
+      <div class="panel" id="panel-files">
+        <div><h2>文件管理</h2><div class="caption">入库记录：上传的文件 / 状态 / 切片数，可随时回看</div></div>
+        <table class="files">
+          <tr><th>文件路径</th><th>库</th><th>状态</th><th>类型</th><th>切片数</th><th>入库时间</th></tr>
+          <tr><td>ingest/private/你的教案_桃花源记_2023.docx</td><td>🟢 私有</td><td class="ok">已入库</td><td>教案</td><td>24</td><td>10-08 14:22</td></tr>
+          <tr><td>ingest/private/课堂记录_八下_第3周.md</td><td>🟢 私有</td><td class="ok">已入库</td><td>课堂笔记</td><td>18</td><td>10-08 14:25</td></tr>
+          <tr><td>ingest/private/错题_象征手法_2025.xlsx</td><td>🟢 私有</td><td class="ok">已入库</td><td>学生错题</td><td>31</td><td>10-07 09:11</td></tr>
+          <tr><td>ingest/private/资治通鉴.txt</td><td>🟢 私有</td><td class="ok">已入库</td><td>文言原著</td><td>9842</td><td>10-05 20:03</td></tr>
+          <tr><td>ingest/public/部编版教材_八下_桃花源记.pdf</td><td>🔵 公共</td><td class="ok">已入库</td><td>教材</td><td>12</td><td>10-06 11:40</td></tr>
+          <tr><td>ingest/public/文言文版_虚词解析.pdf</td><td>🔵 公共</td><td class="ok">已入库</td><td>文言笔记</td><td>40</td><td>10-06 11:44</td></tr>
+          <tr><td>ingest/public/扫描版_板书_未处理.pdf</td><td>—</td><td class="warn">跳过（需 OCR）</td><td>—</td><td>0</td><td>10-06 11:50</td></tr>
+        </table>
+      </div>
+
+      <!-- ===== 切分调试 ===== -->
+      <div class="panel" id="panel-debug">
+        <div>
+          <h2>🔬 切分调试</h2>
+          <div class="caption">挑一个文件、调整切分参数，实时预览切片效果；确认后再写回 config.yaml</div>
+        </div>
+        <div class="gen">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="field"><label>选择来源</label><select><option>私有库 / 资治通鉴.txt</option><option>私有库 / 你的教案_桃花源记_2023.docx</option><option>✍️ 手动粘贴文本</option></select></div>
+            <div class="field"><label>文档类型（决定切分器）</label><select><option>文言原著</option><option>文言笔记</option><option>教案</option></select></div>
+            <div class="field"><label>max_chunk_chars</label><input value="450"></div>
+            <div class="field"><label>overlap_chars</label><input value="80"></div>
+          </div>
+          <div class="row"><button class="go">🔍 预览切分</button><button class="btn scan" style="width:auto;margin:0;padding:8px 16px">💾 保存参数到 config.yaml</button></div>
+        </div>
+        <div class="metrics">
+          <div class="metric"><div class="v">18</div><div class="k">切片数</div></div>
+          <div class="metric"><div class="v">412</div><div class="k">平均字数</div></div>
+          <div class="metric"><div class="v">96 / 450</div><div class="k">最短 / 最长</div></div>
+          <div class="metric"><div class="v">1 / 0</div><div class="k">过短 / 超限</div></div>
+          <div class="metric"><div class="v">—</div><div class="k">备注</div></div>
+        </div>
+        <div class="tip">⚠️ 有 1 个切片不足 50 字（可能是书名/作者等孤立头没被过滤干净），建议留意。</div>
+        <details class="expander" open><summary>#1 [450字] 篇目：周纪一 学段：—</summary>
+          <div class="inner" style="font-size:13px;color:#333">初命晋大夫魏斯、赵籍、韩虔为诸侯……（切片正文）</div>
+        </details>
+        <details class="expander" open><summary>#2 [448字] 篇目：周纪一 学段：—</summary>
+          <div class="inner" style="font-size:13px;color:#333">臣光曰：……（切片正文）</div>
+        </details>
+        <details class="expander"><summary>#3 [402字] 篇目：周纪一 学段：—</summary>
+          <div class="inner" style="font-size:13px;color:#333">……（切片正文）</div>
+        </details>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ================= 右侧长期记忆 ================= -->
+  <aside class="memory">
+    <h4>🧠 希望我记住什么？</h4>
+    <div class="caption">写在这里的长期上下文会注入「写教案 / 出题 / 答疑 / 学情分析」的生成；作文批改不读取。改完点「保存」即可长期保留。</div>
+    <textarea>我班是八年级，学生文言文基础偏弱；板书偏好思维导图式；喜欢用生活例子导入；讲古文习惯先疏通字词再品情感。</textarea>
+    <div>
+      <div class="sec" style="margin-bottom:6px">生效范围（绿 = 生效，白 = 不生效）：</div>
+      <div class="scope-grid">
+        <div class="scope on"><span>写教案</span><span class="light"></span></div>
+        <div class="scope on"><span>出题</span><span class="light"></span></div>
+        <div class="scope on"><span>答疑</span><span class="light"></span></div>
+        <div class="scope"><span>学情分析</span><span class="light"></span></div>
+      </div>
+    </div>
+    <button class="save">💾 保存长期记忆</button>
+  </aside>
+
+</div>
+
+<script>
+  // 标签页切换
+  const tabs = document.querySelectorAll('.tab');
+  const panels = document.querySelectorAll('.panel');
+  tabs.forEach(t => {
+    t.addEventListener('click', () => {
+      tabs.forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      panels.forEach(p => p.classList.remove('active'));
+      const el = document.getElementById('panel-' + t.dataset.tab);
+      if (el) el.classList.add('active');
+    });
+  });
+
+  // 侧边栏「入库到」切换
+  document.querySelectorAll('.switch button').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.switch button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+    });
+  });
+
+  // 长期记忆「生效范围」开关
+  document.querySelectorAll('.scope').forEach(s => {
+    s.addEventListener('click', () => s.classList.toggle('on'));
+  });
+
+  // 临时聊 收起/展开
+  const chatToggle = document.getElementById('chatToggle');
+  const chatBodyWrap = document.getElementById('chatBodyWrap');
+  chatToggle.addEventListener('click', () => {
+    const collapsed = chatBodyWrap.style.display === 'none';
+    chatBodyWrap.style.display = collapsed ? '' : 'none';
+    chatToggle.textContent = collapsed ? '收起 ▲' : '展开 ▼';
+  });
+
+  // 临时聊 清空
+  document.getElementById('chatClear').addEventListener('click', () => {
+    const body = document.getElementById('chatBody');
+    body.innerHTML = '<div class="bubble a">对话已清空。这段是临时聊，刷新页面也会清空。</div>';
+  });
+</script>
+</body>
+</html>
