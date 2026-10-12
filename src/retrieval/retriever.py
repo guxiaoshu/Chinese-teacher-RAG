@@ -14,6 +14,7 @@ from ..llm.embeddings import embed_query, embed_documents
 from ..llm.deepseek import invoke_json
 from ..vectorstore.store import LIBRARY_COLLECTION, get_all_documents, get_collection, upsert_chunks
 from .query_rewrite import expand_queries, extract_intent
+from . import reranker
 
 _R = CONFIG["retrieval"]
 _AUTHORITY = authority_weight_map()
@@ -130,12 +131,7 @@ def _meta_list(meta: dict, key: str) -> list[str]:
 
 
 def contextualize(text: str, meta: dict) -> str:
-    """上下文检索：把片段的 篇目/学段/知识点 前置拼进文本，供「嵌入 + BM25」使用。
 
-    存库仍存原文，这里只在喂给向量/关键词时加前缀，避免显示污染；同时让
-    《古文观止》这类整本书只打一个篇目标签的切片，也能被「岳阳楼记」这类
-    篇目关键词召回，而不是靠正文里恰好出现这几个字。
-    """
     if not _R.get("contextualize", True):
         return text
     meta = meta or {}
@@ -158,7 +154,7 @@ _GRADE_RE = re.compile("|".join(re.escape(g) for g in allowed_grades()))
 
 
 def _regex_intent(query: str) -> dict:
-    """零 LLM 的意图解析：从提问里用正则抽《篇目》与学段，供元数据加权（快速模式）。"""
+
     article = ""
     m = re.search(r"《([^》]{1,30})》", query)
     if m:
@@ -171,7 +167,7 @@ def _regex_intent(query: str) -> dict:
 
 
 def _metadata_boost(meta: dict, intent: dict) -> float:
-    """按检索意图（篇目/学段/知识点）给候选片段加分，让打好的标签真正参与排序。"""
+
     if not intent:
         return 0.0
     score = 0.0
@@ -195,7 +191,6 @@ def _metadata_boost(meta: dict, intent: dict) -> float:
 
 
 def _recall_candidates(library: str, query: str, filters: dict | None, n: int, intent: dict) -> list[RetrievedDoc]:
-    """召回候选：向量 + BM25 → RRF → 权威加权 → 元数据加权（不做精排）。"""
     vec_ids = _vector_rank(library, query, filters, n)
     bm_ids = _bm25_rank(library, query, filters, n)
     ranked = _rrf([vec_ids, bm_ids], _R["rrf_k"])
@@ -232,7 +227,6 @@ def _recall_candidates(library: str, query: str, filters: dict | None, n: int, i
 
 
 def _recall_library(library: str, queries: list[str], filters: dict | None, top_k: int, intent: dict) -> list[RetrievedDoc]:
-    """多查询变体分别召回后按 chunk 合并（多路命中加分），返回排序后的候选列表（不截断）。"""
     n = max(top_k, _R["bm25_top_k"], _R.get("rerank_candidates", 20))
     merged: dict[str, RetrievedDoc] = {}
     for q in queries:
@@ -252,10 +246,7 @@ _RERANK_SYSTEM = """你是检索结果精排器。给定用户问题和若干候
 
 
 def _llm_rerank(query: str, docs: list[RetrievedDoc]) -> list[RetrievedDoc]:
-    """用 flash 对候选做 listwise 相关性精排，并丢弃被判为「无关」的候选。
 
-    失败或未返回 relevant 字段时原样返回（不丢任何候选），由调用方截断。
-    """
     if len(docs) <= 1:
         return docs
     items = []
@@ -299,6 +290,27 @@ def _llm_rerank(query: str, docs: list[RetrievedDoc]) -> list[RetrievedDoc]:
         return docs
 
 
+_CROSS_AUTHORITY_COEFF = 0.03  # 交叉编码器精排后，权威仅作轻微乘性加成；主排序由语义相关度决定
+
+
+def _cross_rerank(query: str, docs: list[RetrievedDoc]) -> list[RetrievedDoc]:
+
+    if len(docs) <= 1:
+        return docs
+    # 精排只看片段开头（标题/首句通常已含主题），且 bge-reranker 注意力是 O(n²)，
+    # 截到 256 字符能比 450 字符快 3 倍左右，CPU 上才扛得住全量评测。
+    texts = [re.sub(r"\s+", " ", d.text)[:256] for d in docs]
+    try:
+        scores = reranker.rerank(query, texts)
+    except Exception:
+        return docs  # 模型缺失/加载失败时降级：保留 RRF 原序
+    for d, s in zip(docs, scores):
+        auth_w = _AUTHORITY.get(d.meta.get("authority", "其他"), 1)
+        d.score = s * (1 + (auth_w - 1) * _CROSS_AUTHORITY_COEFF)
+    docs.sort(key=lambda d: -d.score)
+    return docs
+
+
 def _jaccard(a: str, b: str) -> float:
     sa = set(_tokenize(a))
     sb = set(_tokenize(b))
@@ -308,7 +320,6 @@ def _jaccard(a: str, b: str) -> float:
 
 
 def _dedup(docs: list[RetrievedDoc], threshold: float) -> list[RetrievedDoc]:
-    """近重复去重：与已保留片段 token 相似度过高的丢弃，保证 top-k 覆盖更多角度。"""
     if not threshold or threshold <= 0 or len(docs) <= 1:
         return docs
     kept: list[RetrievedDoc] = []
@@ -327,7 +338,10 @@ def _rerank(query: str, docs: list[RetrievedDoc], top_k: int, enabled: bool) -> 
     if not (enabled and len(docs) > top_k):
         return _dedup(docs, threshold)[:top_k]
     top_n = min(_R.get("rerank_candidates", 20), len(docs))
-    ordered = _llm_rerank(query, docs[:top_n])
+    if _R.get("rerank_backend", "cross_encoder") == "llm":
+        ordered = _llm_rerank(query, docs[:top_n])
+    else:
+        ordered = _cross_rerank(query, docs[:top_n])
     return _dedup(ordered, threshold)[:top_k]
 
 
@@ -350,7 +364,14 @@ def retrieve(query: str, library: str | None = None, filters: dict | None = None
         # 快速模式下仍用正则抽《篇目》/学段做元数据加权，不额外调 LLM
         intent = _regex_intent(query) if _R.get("use_metadata_boost") else {}
 
-    do_rerank = rewrite and bool(_R.get("rerank")) and api_key_ready()
+    backend = _R.get("rerank_backend", "cross_encoder")
+    if backend == "llm":
+        do_rerank = rewrite and bool(_R.get("rerank")) and api_key_ready()
+    elif backend == "none":
+        do_rerank = False
+    else:
+        # 交叉编码器本地推理、无 LLM 往返，快速路径（rewrite=False）也启用精排
+        do_rerank = bool(_R.get("rerank")) and reranker.available()
 
     if library in ("private", "public", "composition"):
         k = top_k or (_R["private_top_k"] if library == "private" else _R["public_top_k"])
@@ -376,12 +397,7 @@ def retrieve(query: str, library: str | None = None, filters: dict | None = None
 
 
 def reembed_library(library: str | None = None) -> int:
-    """对已有文档重新做「上下文嵌入」（contextualize 后重算向量），一次迁移。
 
-    只重算向量，文本/元数据/ids 均不变（upsert 覆盖）。开启 contextualize 后，
-    旧文档的稠密向量仍是裸文本，需调用本函数一次让它们也吃到上下文红利。
-    返回重嵌入的切片总数。
-    """
     libs = [library] if library else list(LIBRARY_COLLECTION.keys())
     total = 0
     for lib in libs:
