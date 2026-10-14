@@ -1,3 +1,6 @@
+
+文档: https://www.yuque.com/zhuyongquan-rgpm9/svnyhr/emf4nipqtp5bgfdg
+
 # 语文教学 RAG 助手
 
 一个帮你备课、出题、答疑、看学情的 AI 小助手。你把资料拖进去，它替你记住、替你整理，等你用的时候再吐出来。
