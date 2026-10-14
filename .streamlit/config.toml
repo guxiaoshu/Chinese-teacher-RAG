@@ -2,3 +2,7 @@
 # 单个上传文件大小上限（MB）。默认 200，这里放宽到 2GB。
 # 超过 2GB 的大文件别走浏览器上传，直接放进 ingest/private 或 ingest/public 再点「扫描现有文件」。
 maxUploadSize = 2000
+# 关掉文件监视器：Streamlit 默认会遍历 site-packages 监视源码变化，
+# 扫到 transformers 时会触发一堆图像模块的懒加载、报 "No module named 'torchvision'"，
+# 刷屏但无害。设为 none 后不再监视，改代码需手动重启（这个项目极少改源码，无所谓）。
+fileWatcherType = "none"
