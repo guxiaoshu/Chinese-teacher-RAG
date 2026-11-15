@@ -1,6 +1,6 @@
 <mxfile host="app.diagrams.net">
   <diagram name="第 1 页" id="9xPMPH8CpBpDYyqf7ypz">
-    <mxGraphModel dx="1124" dy="602" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="4000" pageHeight="4000" math="0" shadow="0">
+    <mxGraphModel dx="1624" dy="870" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="4000" pageHeight="4000" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -634,6 +634,56 @@
         </mxCell>
         <mxCell id="woZNhvaWPM0HIT6FTEh0-46" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="每条贡献1/(k+排名)(k常取60)" vertex="1">
           <mxGeometry height="30" width="174" x="1756" y="1303" as="geometry" />
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-49" edge="1" parent="1" source="woZNhvaWPM0HIT6FTEh0-47" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;labelPadding=0 4;" target="woZNhvaWPM0HIT6FTEh0-48">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-50" edge="1" parent="1" source="woZNhvaWPM0HIT6FTEh0-47" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;labelPadding=0 4;" target="woZNhvaWPM0HIT6FTEh0-48">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-47" parent="1" style="whiteSpace=wrap;html=1;" value="&lt;div&gt;&lt;span style=&quot;font-size: 12px;&quot;&gt;召回+粗排&lt;/span&gt;&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;font-size: 12px;&quot;&gt;向量+BM25融合取Top-N(几十~上百)&lt;br&gt;很快，范围广，但是可能排错&lt;/span&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="183" width="468" x="2939" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-48" parent="1" style="whiteSpace=wrap;html=1;" value="&lt;div&gt;&lt;span style=&quot;font-size: 12px;&quot;&gt;精排(Rerank)&lt;/span&gt;&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;background-color: transparent; color: light-dark(#000000, var(--ge-light-color, #ffffff));&quot;&gt;Cross-Encoder&lt;/span&gt;&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;font-size: 12px;&quot;&gt;逐对深度打分&lt;br&gt;比较准，但慢，只对少量&lt;/span&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="153.5" width="298" x="3024" y="449" as="geometry" />
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-55" edge="1" parent="1" source="woZNhvaWPM0HIT6FTEh0-51" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;defaultLabelBackgroundColor=page;labelPadding=0 4;" target="woZNhvaWPM0HIT6FTEh0-52">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-51" parent="1" style="whiteSpace=wrap;html=1;" value="&lt;div&gt;&lt;span style=&quot;font-size: 12px;&quot;&gt;Top-K&lt;/span&gt;&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;font-size: 12px;&quot;&gt;最相关的3~5条拼上下文生成少而精，省token&lt;/span&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="88.5" width="161" x="3092.5" y="729" as="geometry" />
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-52" parent="1" style="whiteSpace=wrap;html=1;" value="LLM" vertex="1">
+          <mxGeometry height="60" width="120" x="3113" y="906" as="geometry" />
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-53" edge="1" parent="1" source="woZNhvaWPM0HIT6FTEh0-48" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;defaultLabelBackgroundColor=page;labelPadding=0 4;" target="woZNhvaWPM0HIT6FTEh0-51">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="2989" y="618" as="sourcePoint" />
+            <mxPoint x="3024" y="724" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-54" edge="1" parent="1" source="woZNhvaWPM0HIT6FTEh0-48" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;defaultLabelBackgroundColor=page;labelPadding=0 4;" target="woZNhvaWPM0HIT6FTEh0-51">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="3216" y="700" as="sourcePoint" />
+            <mxPoint x="3251" y="806" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-57" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;horizontal=1;" value="逐级收窄" vertex="1">
+          <mxGeometry height="30" width="60" x="3395" y="563" as="geometry" />
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-59" edge="1" parent="1" style="edgeStyle=none;orthogonalLoop=1;jettySize=auto;html=1;rounded=0;defaultLabelBackgroundColor=page;labelPadding=0 4;fillColor=#f8cecc;strokeColor=#b85450;startSize=6;strokeWidth=9;" value="">
+          <mxGeometry relative="1" width="100" as="geometry">
+            <Array as="points" />
+            <mxPoint x="3443.1800000000003" y="304" as="sourcePoint" />
+            <mxPoint x="3258" y="954.9200000000001" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="woZNhvaWPM0HIT6FTEh0-60" edge="1" parent="1" style="edgeStyle=none;orthogonalLoop=1;jettySize=auto;html=1;rounded=0;defaultLabelBackgroundColor=page;labelPadding=0 4;fillColor=#f8cecc;strokeColor=#b85450;startSize=6;strokeWidth=9;" value="">
+          <mxGeometry relative="1" width="100" as="geometry">
+            <Array as="points" />
+            <mxPoint x="2911" y="307.08" as="sourcePoint" />
+            <mxPoint x="3096.1800000000003" y="958" as="targetPoint" />
+          </mxGeometry>
         </mxCell>
       </root>
     </mxGraphModel>
