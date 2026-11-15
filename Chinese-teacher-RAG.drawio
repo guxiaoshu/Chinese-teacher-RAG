@@ -1,11 +1,28 @@
 <mxfile host="app.diagrams.net">
   <diagram name="第 1 页" id="9xPMPH8CpBpDYyqf7ypz">
-    <mxGraphModel dx="4871" dy="2690" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="4000" pageHeight="4000" math="0" shadow="0">
+    <mxGraphModel dx="1948" dy="1076" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="4000" pageHeight="4000" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="k_ub1-Le9kTYkXZFSzvn-1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="" vertex="1">
-          <mxGeometry height="60" width="120" x="1120" y="630" as="geometry" />
+        <mxCell id="bw3OZPGnBVYFvtfSnYKS-2" edge="1" parent="1" source="bw3OZPGnBVYFvtfSnYKS-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;defaultLabelBackgroundColor=page;labelPadding=0 4;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="598.48" y="220" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="bw3OZPGnBVYFvtfSnYKS-1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="&lt;span style=&quot;font-size: 12px;&quot;&gt;文档源PDF/MWord/PPT/视频&lt;/span&gt;" vertex="1">
+          <mxGeometry height="60" width="214" x="230" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="bw3OZPGnBVYFvtfSnYKS-3" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="解析/切分/Embedding" vertex="1">
+          <mxGeometry height="30" width="128" x="481" y="164" as="geometry" />
+        </mxCell>
+        <mxCell id="bw3OZPGnBVYFvtfSnYKS-4" parent="1" style="whiteSpace=wrap;html=1;" value="向量库" vertex="1">
+          <mxGeometry height="60" width="120" x="609" y="194" as="geometry" />
+        </mxCell>
+        <mxCell id="bw3OZPGnBVYFvtfSnYKS-5" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;" value="" vertex="1">
+          <mxGeometry height="250" width="653" x="197" y="74" as="geometry" />
+        </mxCell>
+        <mxCell id="bw3OZPGnBVYFvtfSnYKS-6" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=#6c8ebf;fillColor=#dae8fc;align=center;verticalAlign=middle;rounded=0;" value="离线建库:只跑一次或下班的时候更新，用户感知不到" vertex="1">
+          <mxGeometry height="30" width="372" x="210" y="83" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
