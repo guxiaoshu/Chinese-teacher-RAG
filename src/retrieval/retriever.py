@@ -33,7 +33,10 @@ class RetrievedDoc:
     chunk_id: str = ""
 
     def source_label(self) -> str:
-        labels = {"private": "私有知识库", "public": "公共基准库", "composition": "作文库"}
+        # 手动保存的修正版（generated=False）单独归「手动上传库」，区别于 AI 自动沉淀
+        if self.meta.get("generated") is False:
+            return f"【手动上传库】{self.source_file}"
+        labels = {"private": "私有库", "public": "公有库", "composition": "作文库"}
         lib = labels.get(self.library, "知识库")
         return f"【{lib}】{self.source_file}"
 

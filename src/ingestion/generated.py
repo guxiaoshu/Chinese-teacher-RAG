@@ -31,7 +31,16 @@ _GENERATED_DIR = DATA_DIR / "generated"
 
 def _extract_article(query: str) -> str:
     m = re.search(r"《([^》]{1,30})》", query)
-    return m.group(1).strip() if m else ""
+    article = m.group(1).strip() if m else ""
+    if not article:
+        # 正则没抽到（query 没带《》），用 LLM 意图解析兜底
+        try:
+            from ..retrieval.query_rewrite import extract_intent
+            article = (extract_intent(query) or {}).get("article", "") or ""
+        except Exception:
+            article = ""
+    # 去掉"第N章/卷/篇"编号，保留纯篇目名（"道德经第3章"→"道德经"）
+    return re.sub(r"第[0-9一二三四五六七八九十百千万]+[章节卷篇回则话]+$", "", article).strip()
 
 def _prepare(scenario: str, query: str, content: str):
     """把生成内容切成切片并备好元数据（不落库）。返回 (doc_type, source_name, sha, meta_common, chunks)。"""

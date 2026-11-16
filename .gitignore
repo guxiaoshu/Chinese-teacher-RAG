@@ -18,11 +18,9 @@ _tmp_dl/
 # setup.bat 的安装完成标记
 _setup_ok.txt
 
-# 入库目录里的源文件（如需入库资料进 git，去掉下面注释即可）
-# ingest/private/*
-# ingest/public/*
-# !ingest/private/.gitkeep
-# !ingest/public/.gitkeep
+# 入库目录里的源文件：私有/版权资料不入库；公共库古文为公版，保留入库
+ingest/private/*
+!ingest/private/.gitkeep
 
 # IDE
 .vscode/

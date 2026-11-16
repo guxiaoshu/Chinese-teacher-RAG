@@ -31,6 +31,7 @@ def build_context(docs: list[RetrievedDoc]) -> tuple[str, list[dict]]:
             "authority": d.meta.get("authority", ""),
             "grade": d.meta.get("grade", ""),
             "article": d.meta.get("article", ""),
+            "generated": d.meta.get("generated"),
         })
     return "\n\n---\n\n".join(parts), citations
 

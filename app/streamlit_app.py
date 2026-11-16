@@ -18,7 +18,7 @@ from src.ingestion.composition import import_reference
 from src.ingestion.generated import preview_generated_chunks, save_generated_selected, save_corrected
 from src.ingestion.state import init_db, list_files, count_by_library
 from src.ingestion.watcher import IngestWatcher, scan_existing
-from src.vectorstore.store import count_documents
+from src.vectorstore.store import count_documents, get_all_documents
 from src.retrieval.retriever import rebuild_index
 from src.llm.embeddings import embed_query
 from src.pipeline import process_file
@@ -88,7 +88,10 @@ def _render_citations(citations: list[dict]) -> None:
         return
     with st.expander(f"📎 引用来源（{len(citations)} 条）"):
         for c in citations:
-            lib = {"private": "🟢 私有知识库", "composition": "🟠 作文库"}.get(c["library"], "🔵 公共基准库")
+            if c.get("generated") is False:
+                lib = "🟢 手动上传库"
+            else:
+                lib = {"private": "🟢 私有库", "composition": "🟠 作文库"}.get(c["library"], "🔵 公有库")
             extra = []
             if c.get("authority"):
                 extra.append(f"权威：{c['authority']}")
@@ -288,12 +291,12 @@ with mem_col:
     for idx, s in enumerate(MEMORY_SCOPES):
         lit = bool(st.session_state["memory_scopes"].get(s, True))
         if cols[idx % 2].button(
-            s, key=f"mem_scope_{idx}", use_container_width=True,
+            s, key=f"mem_scope_{idx}", width="stretch",
             type="primary" if lit else "secondary",
         ):
             st.session_state["memory_scopes"][s] = not lit
             st.rerun()
-    if st.button("💾 保存长期记忆", key="remember_save", use_container_width=True):
+    if st.button("💾 保存长期记忆", key="remember_save", width="stretch"):
         save_memory(
             st.session_state["remember_memory_editor"],
             [s for s in MEMORY_SCOPES if st.session_state["memory_scopes"].get(s)],
@@ -311,7 +314,7 @@ with main_col:
         with toggle_col:
             if "chat_open" not in st.session_state:
                 st.session_state["chat_open"] = True
-            if st.button("收起 ▲" if st.session_state["chat_open"] else "展开 ▼", key="chat_toggle", use_container_width=True):
+            if st.button("收起 ▲" if st.session_state["chat_open"] else "展开 ▼", key="chat_toggle", width="stretch"):
                 st.session_state["chat_open"] = not st.session_state["chat_open"]
                 st.rerun()
         if st.session_state["chat_open"]:
@@ -325,7 +328,7 @@ with main_col:
                     help="勾选走 reason_model（适合需要推理的难题）；不勾用默认快模型。",
                 )
             with c2:
-                if st.button("🗑 清空对话", key="chat_clear", use_container_width=True):
+                if st.button("🗑 清空对话", key="chat_clear", width="stretch"):
                     st.session_state["chat_history"] = []
                     st.rerun()
             for m in st.session_state["chat_history"]:
@@ -347,7 +350,7 @@ with main_col:
                             st.error(answer)
                     st.session_state["chat_history"].append({"role": "assistant", "content": answer})
     st.divider()
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["✍️ 写教案", "📝 出题", "💬 答疑", "📊 学情分析", "🖊 作文批改", "📽 生成 PPT", "🗂 文件管理", "🔬 切分调试"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["✍️ 写教案", "📝 出题", "💬 答疑", "📊 学情分析", "🖊 作文批改", "📽 生成 PPT", "🗂 文件管理", "🔬 切片管理"])
 
 with tab1:
     st.header("针对性备课")
@@ -404,10 +407,15 @@ with tab2:
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("检索私有错题库 + 命题中…"):
-                res = exam.run(q, save=False, memory=_current_memory("出题"))
-            _push_round("hist_exam", "出题", q, res.content, res.citations)
-            st.session_state["_clear_exam"] = True
-            st.rerun()
+                try:
+                    res = exam.run(q, save=CONFIG["ingestion"]["auto_save_generated"], memory=_current_memory("出题"))
+                except Exception as e:
+                    st.error(f"出题失败：{e}")
+                    res = None
+            if res is not None:
+                _push_round("hist_exam", "出题", q, res.content, res.citations)
+                st.session_state["_clear_exam"] = True
+                st.rerun()
     _render_rounds("hist_exam", "出题")
 
 with tab3:
@@ -429,13 +437,18 @@ with tab3:
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("检索老师过往资料 + 生成启发式回复…"):
-                res = qa.run(q, save=False, memory=_current_memory("答疑"),
-                             history=list(st.session_state["qa_history"]))
-            st.session_state["qa_history"].append({"role": "user", "content": q})
-            st.session_state["qa_history"].append({"role": "assistant", "content": res.content})
-            _push_round("hist_qa", "答疑", q, res.content, res.citations)
-            st.session_state["_clear_qa"] = True
-            st.rerun()
+                try:
+                    res = qa.run(q, save=CONFIG["ingestion"]["auto_save_generated"], memory=_current_memory("答疑"),
+                                 history=list(st.session_state["qa_history"]))
+                except Exception as e:
+                    st.error(f"答疑失败：{e}")
+                    res = None
+            if res is not None:
+                st.session_state["qa_history"].append({"role": "user", "content": q})
+                st.session_state["qa_history"].append({"role": "assistant", "content": res.content})
+                _push_round("hist_qa", "答疑", q, res.content, res.citations)
+                st.session_state["_clear_qa"] = True
+                st.rerun()
     _render_rounds("hist_qa", "答疑")
 
 with tab4:
@@ -453,10 +466,15 @@ with tab4:
             st.error("请先在 .env 填写真实 API key")
         elif q.strip():
             with st.spinner("分析私有错题中…"):
-                res = learning_analysis.run(q, save=False, memory=_current_memory("学情分析"))
-            _push_round("hist_la", "学情分析", q, res.content, res.citations)
-            st.session_state["_clear_la"] = True
-            st.rerun()
+                try:
+                    res = learning_analysis.run(q, save=CONFIG["ingestion"]["auto_save_generated"], memory=_current_memory("学情分析"))
+                except Exception as e:
+                    st.error(f"学情分析失败：{e}")
+                    res = None
+            if res is not None:
+                _push_round("hist_la", "学情分析", q, res.content, res.citations)
+                st.session_state["_clear_la"] = True
+                st.rerun()
     _render_rounds("hist_la", "学情分析")
 
 with tab5:
@@ -482,7 +500,7 @@ with tab5:
         grade = st.selectbox("学段（可选）", [""] + allowed_grades(), key="essay_grade")
         save_essay_flag = st.checkbox("批改后存入作文库", value=True, key="save_essay",
                                       help="勾选=本次作文+评分沉淀进作文库，按学生追踪；不勾=只显示不入库")
-        if st.button("开始批改", type="primary", key="essay_btn", use_container_width=True):
+        if st.button("开始批改", type="primary", key="essay_btn", width="stretch"):
             essay_text = st.session_state.get("essay_text", "")
             if not api_key_ready():
                 st.error("请先在 .env 填写真实 API key")
@@ -546,7 +564,7 @@ with tab6:
         else:
             with st.spinner("检索资料 + 生成课件中…"):
                 try:
-                    res = ppt.run(q, output_dir=out_dir, save=False, use_image=use_image)
+                    res = ppt.run(q, output_dir=out_dir, save=CONFIG["ingestion"]["auto_save_generated"], use_image=use_image)
                 except Exception as e:
                     st.error(f"生成失败：{e}")
                     res = None
@@ -583,55 +601,138 @@ with tab7:
         cols = ["path", "library", "status", "doc_type", "chunk_count", "processed_at", "error"]
         df = df[[c for c in cols if c in df.columns]]
         df.columns = ["文件路径", "库", "状态", "类型", "切片数", "入库时间", "错误"] if len(df.columns) == 7 else df.columns
-        st.dataframe(df, use_container_width=True, height=400)
+        st.dataframe(df, width="stretch", height=400)
+
+
+def _update_chunk(library: str, chunk_id: str, new_text: str, meta: dict) -> bool:
+    """编辑切片：重新嵌入（带 context 前缀）并写回向量库，重建 BM25。"""
+    from src.llm.embeddings import embed_documents
+    from src.vectorstore.store import upsert_chunks
+    from src.retrieval.retriever import contextualize
+    new_text = (new_text or "").strip()
+    if not new_text or not chunk_id:
+        return False
+    try:
+        emb = embed_documents([contextualize(new_text, meta)])
+        upsert_chunks(library, [chunk_id], [new_text], emb, [meta])
+        rebuild_index(library)
+        return True
+    except Exception:
+        return False
+
 
 with tab8:
-    st.header("🔬 切分调试")
-    st.caption("挑一个文件、调整切分参数，实时预览切片效果；确认后再写回 config.yaml。")
-    files = _list_debug_files()
-    labels = [f[0] for f in files] + ["✍️ 手动粘贴文本"]
-    choice = st.selectbox("选择来源", labels)
-    if choice == "✍️ 手动粘贴文本":
-        text = st.text_area("粘贴要切分的文本", height=200)
-    else:
-        path = files[labels.index(choice)][1]
-        try:
-            text = extract_text(Path(path)) or ""
-        except Exception as e:
-            text = ""
-            st.error(f"读取失败：{e}")
-        st.caption(f"来源：{path} · {len(text)} 字符")
-    c1, c2, c3 = st.columns([1.3, 1, 1])
-    doc_type = c1.selectbox("文档类型（决定切分器）", allowed_doc_types(),
-                            index=allowed_doc_types().index("文言原著"))
-    max_chars = c2.number_input("max_chunk_chars", 100, 5000, int(CONFIG["chunking"]["max_chunk_chars"]), step=100)
-    overlap = c3.number_input("overlap_chars", 0, 500, int(CONFIG["chunking"]["overlap_chars"]), step=20)
-    b1, b2 = st.columns(2)
-    if b1.button("🔍 预览切分", type="primary", use_container_width=True):
-        if not (text or "").strip():
-            st.warning("请先选择文件或粘贴文本")
+    st.header("🔬 切片管理")
+    view_tab, debug_tab = st.tabs(["📚 已入库切片（查看 + 编辑）", "🔍 切分预览"])
+
+    with view_tab:
+        c1, c2 = st.columns([2, 1])
+        src_sel = c1.radio("来源", ["全部", "公有库", "私有库", "手动上传库", "作文库"], horizontal=True, key="cm_src")
+        kw = c2.text_input("关键词（正文 / 文件名）", key="cm_kw")
+
+        def _match(lib, is_gen):
+            if src_sel == "全部":
+                return True
+            if src_sel == "公有库":
+                return lib == "public"
+            if src_sel == "私有库":
+                return lib == "private"
+            if src_sel == "手动上传库":
+                return not is_gen
+            if src_sel == "作文库":
+                return lib == "composition"
+            return True
+
+        rows = []
+        for lib in ["public", "private", "composition"]:
+            data = get_all_documents(lib)
+            ids = data.get("ids") or []
+            docs = data.get("documents") or []
+            metas = data.get("metadatas") or []
+            for i, text in enumerate(docs):
+                meta = metas[i] if i < len(metas) else {}
+                fname = str(meta.get("source_file", ""))
+                is_gen = bool(meta.get("generated"))
+                if not _match(lib, is_gen):
+                    continue
+                if kw and kw not in text and kw not in fname:
+                    continue
+                cid = ids[i] if i < len(ids) else ""
+                rows.append((lib, cid, text, meta, is_gen))
+
+        st.caption(f"符合筛选：{len(rows)} 条")
+        file_options = sorted({str(m.get("source_file", "")) for _, _, _, m, _ in rows})
+        file_sel = st.selectbox("只看某个文件", ["全部"] + file_options, key="cm_file")
+        if file_sel != "全部":
+            rows = [r for r in rows if str(r[3].get("source_file", "")) == file_sel]
+
+        limit = st.slider("最多显示条数", 5, 200, 30, step=5, key="cm_limit")
+        shown = rows[:limit]
+
+        lib_label = {"public": "公有库", "private": "私有库", "composition": "作文库"}
+        for lib, cid, text, meta, is_gen in shown:
+            title = f"【{lib_label.get(lib, lib)}】{meta.get('source_file','?')} · {meta.get('doc_type','?')} · 权威:{meta.get('authority','?')}"
+            with st.expander(title):
+                for k in ("article", "grade", "knowledge_points", "summary"):
+                    v = meta.get(k)
+                    if v:
+                        st.markdown(f"**{k}**：{v}")
+                new_text = st.text_area("切片内容（可编辑）", text, key=f"cm_edit_{lib}_{cid}", height=160)
+                if st.button("💾 保存这条切片", key=f"cm_save_{lib}_{cid}"):
+                    if _update_chunk(lib, cid, new_text, meta):
+                        st.success("已保存并重新嵌入")
+                        st.rerun()
+                    else:
+                        st.error("保存失败")
+        if len(rows) > limit:
+            st.caption(f"还有 {len(rows) - limit} 条未显示，请缩小筛选或调大条数。")
+
+    with debug_tab:
+        st.caption("挑一个文件、调整切分参数，实时预览切片效果；确认后再写回 config.yaml。")
+        files = _list_debug_files()
+        labels = [f[0] for f in files] + ["✍️ 手动粘贴文本"]
+        choice = st.selectbox("选择来源", labels)
+        if choice == "✍️ 手动粘贴文本":
+            text = st.text_area("粘贴要切分的文本", height=200)
         else:
-            chunks = _preview_chunks(text, doc_type, max_chars, overlap)
-            if not chunks:
-                st.error("切分结果为空")
+            path = files[labels.index(choice)][1]
+            try:
+                text = extract_text(Path(path)) or ""
+            except Exception as e:
+                text = ""
+                st.error(f"读取失败：{e}")
+            st.caption(f"来源：{path} · {len(text)} 字符")
+        c1, c2, c3 = st.columns([1.3, 1, 1])
+        doc_type = c1.selectbox("文档类型（决定切分器）", allowed_doc_types(),
+                                index=allowed_doc_types().index("文言原著"))
+        max_chars = c2.number_input("max_chunk_chars", 100, 5000, int(CONFIG["chunking"]["max_chunk_chars"]), step=100)
+        overlap = c3.number_input("overlap_chars", 0, 500, int(CONFIG["chunking"]["overlap_chars"]), step=20)
+        b1, b2 = st.columns(2)
+        if b1.button("🔍 预览切分", type="primary", width="stretch"):
+            if not (text or "").strip():
+                st.warning("请先选择文件或粘贴文本")
             else:
-                lens = [len(c.text) for c in chunks]
-                avg = round(sum(lens) / len(lens))
-                short = sum(1 for l in lens if l < 50)
-                over = sum(1 for l in lens if l > int(max_chars))
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("切片数", len(chunks))
-                m2.metric("平均字数", avg)
-                m3.metric("最短 / 最长", f"{min(lens)} / {max(lens)}")
-                m4.metric("过短 / 超限", f"{short} / {over}")
-                if short:
-                    st.info(f"⚠️ 有 {short} 个切片不足 50 字，可能是书名/作者等孤立头没被过滤干净，建议留意。")
-                if over:
-                    st.info(f"📏 有 {over} 个切片超过 {max_chars} 字（掉进兜底硬切），说明结构切分没兜住这一篇。")
-                for i, c in enumerate(chunks):
-                    meta = " · ".join(f"{k}={v}" for k, v in c.meta.items())
-                    with st.expander(f"#{i+1}  [{len(c.text)}字]  {meta}", expanded=(i < 3)):
-                        st.text(c.text[:3000])
-    if b2.button("💾 保存参数到 config.yaml", use_container_width=True):
-        _save_chunking_params(max_chars, overlap)
-        st.success(f"已保存 max_chunk_chars={int(max_chars)} / overlap_chars={int(overlap)}。新入库文件立即生效；已入库切片需重新入库才更新。")
+                chunks = _preview_chunks(text, doc_type, max_chars, overlap)
+                if not chunks:
+                    st.error("切分结果为空")
+                else:
+                    lens = [len(c.text) for c in chunks]
+                    avg = round(sum(lens) / len(lens))
+                    short = sum(1 for l in lens if l < 50)
+                    over = sum(1 for l in lens if l > int(max_chars))
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("切片数", len(chunks))
+                    m2.metric("平均字数", avg)
+                    m3.metric("最短 / 最长", f"{min(lens)} / {max(lens)}")
+                    m4.metric("过短 / 超限", f"{short} / {over}")
+                    if short:
+                        st.info(f"⚠️ 有 {short} 个切片不足 50 字，可能是书名/作者等孤立头没被过滤干净，建议留意。")
+                    if over:
+                        st.info(f"📏 有 {over} 个切片超过 {max_chars} 字（掉进兜底硬切），说明结构切分没兜住这一篇。")
+                    for i, c in enumerate(chunks):
+                        meta = " · ".join(f"{k}={v}" for k, v in c.meta.items())
+                        with st.expander(f"#{i+1}  [{len(c.text)}字]  {meta}", expanded=(i < 3)):
+                            st.text(c.text[:3000])
+        if b2.button("💾 保存参数到 config.yaml", width="stretch"):
+            _save_chunking_params(max_chars, overlap)
+            st.success(f"已保存 max_chunk_chars={int(max_chars)} / overlap_chars={int(overlap)}。新入库文件立即生效；已入库切片需重新入库才更新。")
