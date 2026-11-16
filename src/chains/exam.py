@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..retrieval.retriever import retrieve
 from ..llm.deepseek import invoke_json
 from ..ingestion.generated import save_generated
-from .common import ChainResult, build_context, with_memory
+from .common import ChainResult, build_context, with_memory, should_refuse
 
 _SYSTEM = """你是中学语文命题专家，为老师「针对学生真实踩坑点定制试卷」。
 
@@ -30,7 +30,7 @@ _SYSTEM = """你是中学语文命题专家，为老师「针对学生真实踩�
 
 def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
     docs = retrieve(query, library="private")
-    if not docs:
+    if should_refuse(docs):
         return ChainResult(content="私有库还没有学生错题/作答样本，无法出题。请先上传错题或作答样本到「入库」页。", citations=[])
     ctx, citations = build_context(docs)
     user = with_memory(f"出题需求：{query}\n\n检索到的学生错题/作答样本（薄弱点必须来自这里）：\n{ctx}", memory)

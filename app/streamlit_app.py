@@ -23,6 +23,7 @@ from src.retrieval.retriever import rebuild_index
 from src.llm.embeddings import embed_query
 from src.pipeline import process_file
 from src.chains import lesson_plan, exam, qa, learning_analysis, essay, ppt, chat
+from src.chains.common import REFUSAL_MESSAGE
 from src.memory import load as load_memory, save as save_memory, SCOPES as MEMORY_SCOPES
 from src.history import FEATURES as HISTORY_FEATURES, load as load_history, save as save_history, clear as clear_history
 
@@ -368,15 +369,19 @@ with tab1:
         elif q.strip():
             memory = _current_memory("写教案")
             with st.spinner("检索私有库 + 备课中…"):
-                user, ctx, citations = lesson_plan.prepare(q, memory)
+                user, ctx, citations, refuse = lesson_plan.prepare(q, memory)
             ok = True
             with st.chat_message("assistant"):
-                try:
-                    content = st.write_stream(lesson_plan.stream_from(user, use_reason=use_reason))
-                except Exception as e:
-                    content = f"出错了：{e}"
-                    ok = False
-                    st.error(content)
+                if refuse:
+                    content = REFUSAL_MESSAGE
+                    st.markdown(content)
+                else:
+                    try:
+                        content = st.write_stream(lesson_plan.stream_from(user, use_reason=use_reason))
+                    except Exception as e:
+                        content = f"出错了：{e}"
+                        ok = False
+                        st.error(content)
             content = content or ""
             if ok:
                 _push_round("hist_lp", "写教案", q, content, citations, lesson_plan.grounding_warning(content, ctx))

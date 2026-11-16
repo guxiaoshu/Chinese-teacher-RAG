@@ -4,7 +4,7 @@ from ..retrieval.retriever import retrieve
 from ..llm.deepseek import get_chat_llm, get_reason_llm, invoke_json
 from ..config import CONFIG, api_key_ready
 from ..ingestion.generated import save_generated
-from .common import ChainResult, build_context, with_memory
+from .common import ChainResult, build_context, with_memory, should_refuse, REFUSAL_MESSAGE
 
 _SYSTEM = """你是一位资深中学语文教研员，为一位有多年教学沉淀的老师做「针对性备课」。
 
@@ -54,12 +54,14 @@ def _format_warning(issues: list[dict]) -> str:
     return "".join(lines)
 
 
-def prepare(query: str, memory: str = "") -> tuple[str, str, list[dict]]:
-    """检索 + 组装消息，返回 (user 消息, 检索上下文, 引用列表)，供流式与整段生成共用。"""
+def prepare(query: str, memory: str = "") -> tuple[str, str, list[dict], bool]:
+    """检索 + 组装消息，返回 (user 消息, 检索上下文, 引用列表, 是否拒答)，供流式与整段生成共用。"""
     docs = retrieve(query)
+    if should_refuse(docs):
+        return "", "", [], True
     ctx, citations = build_context(docs)
     user = with_memory(f"备课需求：{query}\n\n检索到的参考材料：\n{ctx}", memory)
-    return user, ctx, citations
+    return user, ctx, citations, False
 
 
 def _llm(use_reason: bool, streaming: bool = False):
@@ -84,7 +86,9 @@ def grounding_warning(content: str, ctx: str) -> str:
 
 
 def run(query: str, save: bool = True, memory: str = "", use_reason: bool = False) -> ChainResult:
-    user, ctx, citations = prepare(query, memory)
+    user, ctx, citations, refuse = prepare(query, memory)
+    if refuse:
+        return ChainResult(content=REFUSAL_MESSAGE, citations=[])
     llm = _llm(use_reason)
     resp = llm.invoke([
         {"role": "system", "content": _SYSTEM},

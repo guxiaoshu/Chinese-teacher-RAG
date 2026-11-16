@@ -4,7 +4,7 @@ from ..retrieval.retriever import retrieve
 from ..retrieval.query_rewrite import rewrite_with_history
 from ..llm.deepseek import get_chat_llm
 from ..ingestion.generated import save_generated
-from .common import ChainResult, build_context, with_memory
+from .common import ChainResult, build_context, with_memory, should_refuse
 
 _SYSTEM = """你是老师私人的语文教学答疑助手。为学生答疑时以启发式为主，不直接输出完整答案。
 
@@ -20,6 +20,8 @@ def run(query: str, save: bool = True, memory: str = "", history: list[dict] | N
     # 多轮：结合历史把提问改写成独立完整的问题（补全「那」「它」等指代）再检索
     search_query = rewrite_with_history(query, history) if history else query
     docs = retrieve(search_query)
+    if should_refuse(docs):
+        return ChainResult(content="没有检索到老师过往的相关资料，无法进行启发式答疑。建议先上传相关课堂笔记/教案，或换一种更具体的问法。", citations=[])
     ctx, citations = build_context(docs)
     user = with_memory(f"学生/老师的问题：{query}\n\n可参考的老师过往资料：\n{ctx}", memory)
     messages = [{"role": "system", "content": _SYSTEM}, *history, {"role": "user", "content": user}]

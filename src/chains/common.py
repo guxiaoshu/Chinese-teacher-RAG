@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..config import CONFIG
 from ..retrieval.retriever import RetrievedDoc
 
 @dataclass
@@ -40,3 +41,16 @@ def with_memory(user: str, memory: str) -> str:
     if not m:
         return user
     return f"【老师希望你长期记住的上下文，生成时须优先遵循】\n{m}\n\n{user}"
+
+
+REFUSAL_MESSAGE = "抱歉，知识库里没有检索到与这个问题相关的内容，无法作答。建议先上传相关教学资料，或换一种更具体的问法。"
+
+
+def should_refuse(docs: list[RetrievedDoc]) -> bool:
+    """检索不足时判拒答：docs 为空，或最高分低于 config 的 refuse_score 阈值。"""
+    if not docs:
+        return True
+    threshold = float(CONFIG.get("retrieval", {}).get("refuse_score", 0) or 0)
+    if threshold > 0:
+        return max(d.score for d in docs) < threshold
+    return False

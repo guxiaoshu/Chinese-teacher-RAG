@@ -10,7 +10,7 @@ from ..llm.deepseek import invoke_json
 from ..ingestion.generated import save_generated
 from ..config import BASE_DIR, PPT_OUTPUT_DIR
 from ..ppt import deck, imagegen, styles
-from .common import ChainResult, build_context
+from .common import ChainResult, build_context, should_refuse
 
 _SYSTEM = """你是一位资深中学语文教研员兼课件设计师。基于检索到的教案/资料，把一节课整理成结构清晰、可直接上屏的课件大纲。
 
@@ -36,6 +36,8 @@ _SYSTEM = """你是一位资深中学语文教研员兼课件设计师。基于�
 def run(query: str, output_dir: str | None = None, save: bool = True,
         style_key: str | None = None, use_image: bool = True) -> ChainResult:
     docs = retrieve(query)
+    if should_refuse(docs):
+        return ChainResult(content="没有检索到与课件主题相关的资料，无法生成 PPT。请先上传相关教案/资料，或换一个更具体的主题。", citations=[])
     ctx, citations = build_context(docs)
 
     data = invoke_json([

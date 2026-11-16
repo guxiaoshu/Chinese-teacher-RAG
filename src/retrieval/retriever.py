@@ -83,8 +83,14 @@ def _vector_rank(library: str, query: str, filters: dict | None, n: int) -> list
     emb = embed_query(query)
     col = get_collection(library)
     res = col.query(query_embeddings=[emb], n_results=max(n, 1), where=_to_where(filters))
-    ids = res.get("ids") or [[]]
-    return [i for i in ids[0] if i]
+    ids = (res.get("ids") or [[]])[0]
+    dists = (res.get("distances") or [[]])[0]
+    min_sim = float(_R.get("min_similarity", 0) or 0)
+    if min_sim > 0 and len(ids) == len(dists):
+        # chroma 的 hnsw:space=cosine 返回余弦距离（1 - 相似度），越低越相似；
+        # 过滤掉相似度低于阈值的 chunk，让"检索到但不相关"也走拒答。
+        ids = [i for i, d in zip(ids, dists) if (1.0 - d) >= min_sim]
+    return [i for i in ids if i]
 
 def _bm25_rank(library: str, query: str, filters: dict | None, n: int) -> list[str]:
     idx = _ensure_index(library)
