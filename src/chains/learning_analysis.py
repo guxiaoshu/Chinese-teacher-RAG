@@ -21,6 +21,8 @@ _SYSTEM = """你是学情分析助手，基于老师【私有知识库】里的�
 
 def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
     docs = retrieve(query, library="private")
+    if not docs:
+        return ChainResult(content="私有库还没有相关错题/作答样本，无法做学情分析。请先上传学生错题或作答样本。", citations=[])
     ctx, citations = build_context(docs)
     user = with_memory(f"学情分析需求：{query}\n\n检索到的学生错题/作答样本：\n{ctx}", memory)
     data = invoke_json([

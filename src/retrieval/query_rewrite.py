@@ -111,3 +111,43 @@ def extract_intent(query: str) -> dict:
     if not q or not api_key_ready():
         return {}
     return _intent_cached(q)
+
+
+_HISTORY_REWRITE_SYSTEM = """你是中学语文多轮对话查询改写器。给定一段对话历史和用户的最新提问，把最新提问改写成一句「独立完整、不依赖上文」的检索查询，用于后续向量检索。
+
+规则：
+1. 补全指代：把「那」「它」「这个」「刚才那个」「上面说的」「这里」等，结合历史替换成它们实际指代的内容。
+2. 补全省略的主语/对象/篇目：如「那『乃』呢」→「《岳阳楼记》里的文言虚词『乃』的用法」。
+3. 只补不删、不无中生有：不确定指代时保留原意，不要凭空加篇目或知识点。
+4. 只输出一句改写后的中文查询，不要引号、不要解释、不要多余文字。"""
+
+
+def rewrite_with_history(query: str, history: list[dict]) -> str:
+    """把最新提问结合对话历史改写成独立完整的检索查询（解决「那/它」等指代）。
+
+    history 形如 [{"role": "user"/"assistant", "content": "..."}, ...]，按时间顺序。
+    无历史或 key 未就绪时原样返回，不额外调 LLM。
+    """
+    q = (query or "").strip()
+    if not q or not history or not api_key_ready():
+        return query
+    recent = history[-6:]  # 只带最近 6 条，避免上下文过长
+    convo = "\n".join(
+        f"{m.get('role', 'user')}: {m.get('content', '')}".strip()
+        for m in recent if m.get("content")
+    )
+    if not convo:
+        return query
+    prompt = f"对话历史：\n{convo}\n\n最新提问：{q}"
+    try:
+        llm = get_chat_llm(temperature=0.0)
+        resp = llm.invoke([
+            {"role": "system", "content": _HISTORY_REWRITE_SYSTEM},
+            {"role": "user", "content": prompt},
+        ])
+        out = (resp.content or "").strip()
+        if 2 <= len(out) <= max(len(q) * 5, 100):
+            return out
+        return q
+    except Exception:
+        return q

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..retrieval.retriever import retrieve
+from ..retrieval.query_rewrite import rewrite_with_history
 from ..llm.deepseek import get_chat_llm
 from ..ingestion.generated import save_generated
 from .common import ChainResult, build_context, with_memory
@@ -14,15 +15,16 @@ _SYSTEM = """你是老师私人的语文教学答疑助手。为学生答疑时�
 4. 语气像老师本人，沿用其教学话术。
 """
 
-def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
-    docs = retrieve(query)
+def run(query: str, save: bool = True, memory: str = "", history: list[dict] | None = None) -> ChainResult:
+    history = (history or [])[-12:]  # 最多带最近 6 轮，避免上下文无限增长
+    # 多轮：结合历史把提问改写成独立完整的问题（补全「那」「它」等指代）再检索
+    search_query = rewrite_with_history(query, history) if history else query
+    docs = retrieve(search_query)
     ctx, citations = build_context(docs)
     user = with_memory(f"学生/老师的问题：{query}\n\n可参考的老师过往资料：\n{ctx}", memory)
+    messages = [{"role": "system", "content": _SYSTEM}, *history, {"role": "user", "content": user}]
     llm = get_chat_llm()
-    resp = llm.invoke([
-        {"role": "system", "content": _SYSTEM},
-        {"role": "user", "content": user},
-    ])
+    resp = llm.invoke(messages)
     content = resp.content
     if save:
         save_generated("答疑", query, content)

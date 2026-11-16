@@ -30,6 +30,8 @@ _SYSTEM = """你是中学语文命题专家，为老师「针对学生真实踩�
 
 def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
     docs = retrieve(query, library="private")
+    if not docs:
+        return ChainResult(content="私有库还没有学生错题/作答样本，无法出题。请先上传错题或作答样本到「入库」页。", citations=[])
     ctx, citations = build_context(docs)
     user = with_memory(f"出题需求：{query}\n\n检索到的学生错题/作答样本（薄弱点必须来自这里）：\n{ctx}", memory)
     data = invoke_json([

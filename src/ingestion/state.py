@@ -90,13 +90,13 @@ def upsert(path: Path | str, sha: str, library: str, status: str, **fields) -> N
         conn.close()
 
 def mark_processed(path: Path | str, sha: str, library: str, chunk_count: int, doc_type: str, tags: dict) -> None:
-    upsert(path, sha, library, "processed", chunk_count=chunk_count, doc_type=doc_type, tags=json.dumps(tags, ensure_ascii=False))
+    upsert(path, sha, library, "processed", chunk_count=chunk_count, doc_type=doc_type, tags=json.dumps(tags, ensure_ascii=False), error="")
 
 def mark_error(path: Path | str, sha: str, library: str, error: str) -> None:
     upsert(path, sha, library, "error", error=error[:500])
 
 def mark_skipped(path: Path | str, sha: str, library: str) -> None:
-    upsert(path, sha, library, "skipped")
+    upsert(path, sha, library, "skipped", error="")
 
 def list_files() -> list[dict]:
     conn = get_conn()
