@@ -23,7 +23,8 @@ def _is_relevant(doc, item: dict) -> bool:
     expected = item.get("expected", [])
     source = doc.source_file or ""
     article = doc.meta.get("article", "") or ""
-    return any(k in source or k in article for k in expected)
+    title = doc.meta.get("title", "") or ""
+    return any(k in source or k in article or k in title for k in expected)
 
 def _eval_once(queries: list[dict], k: int, rewrite: bool, library: str | None) -> dict:
     recall_hits = 0

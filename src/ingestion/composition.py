@@ -49,21 +49,32 @@ def _upsert(text: str, meta: dict, prefix: str) -> bool:
 
 
 def save_essay(text: str, *, student: str, topic: str, level: str,
-               score: int, content_score: int, expression_score: int,
-               development_score: int, comment: str, grade: str = "") -> bool:
-    """沉淀一篇已批改的学生作文（含评分与点评）。"""
-    return _upsert(text, {
+               score: int, comment: str, grade: str = "",
+               content_score: int | None = None,
+               expression_score: int | None = None,
+               development_score: int | None = None) -> bool:
+    """沉淀一篇已批改的学生作文（含总分、档次与点评）。
+
+    分项分（内容/表达/发展）在整体评分模式下不再产出，保留为可选参数：
+    传 None 就不写入元数据，避免落一堆无意义的 0 污染后续学情统计。
+    """
+    meta = {
         "doc_type": "学生作文",
         "student": student or "",
         "topic": topic or "",
         "grade": grade or "",
         "level": level,
         "score": int(score),
-        "content_score": int(content_score),
-        "expression_score": int(expression_score),
-        "development_score": int(development_score),
         "comment": comment or "",
-    }, "essay")
+    }
+    for key, val in (
+        ("content_score", content_score),
+        ("expression_score", expression_score),
+        ("development_score", development_score),
+    ):
+        if val is not None:
+            meta[key] = int(val)
+    return _upsert(text, meta, "essay")
 
 
 def import_reference(text: str, *, topic: str, level: str, title: str = "") -> bool:
