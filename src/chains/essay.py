@@ -13,25 +13,27 @@ _SYSTEM = f"""你是高考语文作文阅卷专家，严格执行下面的评分
 评分要求：
 1. 只输出 JSON（不要输出其它任何文字），字段如下：
 {{
-  "total_score": 整数（0-60，总分，须落在该作文所处档位的给分区间内）,
-  "content_comment": "内容点评，一两句（题意、立意、中心、材料、论据）",
-  "expression_comment": "表达点评，一两句（文体、结构、语言、书写）",
-  "development_comment": "发展点评，一两句（深刻/丰富/文采/创意中的突出点或缺失）",
+  "content_score": 整数（0-20，内容分，须落在该作文所处档位区间内）,
+  "expression_score": 整数（0-20，表达分）,
+  "development_score": 整数（0-20，发展分）,
+  "content_comment": "内容分项点评，一两句（与题意贴合度、中心、材料、思想感情）",
+  "expression_comment": "表达分项点评，一两句（文体、结构、语言、书写）",
+  "development_comment": "发展分项点评，一两句（深刻/丰富/有文采/有创意中的突出点或缺失）",
   "highlights": ["亮点1", "亮点2"],
   "problems": ["问题1", "问题2"],
   "suggestions": ["具体升格建议1", "具体升格建议2"],
   "overall_comment": "总体评语，两三句"
 }}
-2. 总分必须严格落在该作文实际达到档次的给分区间内（A 50-60 / B 42-49 / C 30-41 / D 18-29 / E 0-17），不得凭感觉乱给。
+2. 三个分项分数必须严格落在该作文实际达到档次的给分区间内，不得凭感觉乱给。
 3. 若提供了该生过往作文，参考其水平轨迹，在 overall_comment 中指出进步或退步。
-4. 若提供了范文锚点（每篇已标注其档次 A-E），对照这些范文的水准来校准该作文的档次与总分。
-5. 档次由程序根据总分自动计算，你无需输出档次。
+4. 若提供了范文锚点，与同题/同档范文对照校准给分。
+5. 总分与档次由程序根据三项分自动计算，你无需输出总分和档次。
 """
 
 
-def _score(v, hi: int = 20) -> int:
+def _score(v) -> int:
     try:
-        return max(0, min(hi, int(v)))
+        return max(0, min(20, int(v)))
     except Exception:
         return 0
 
@@ -48,16 +50,12 @@ def _build_ref_context(past, refs) -> tuple[str, list[dict]]:
         parts.append(f"【{label}】")
         for d in docs:
             n += 1
-            lv = (d.meta.get("level") or "").strip()
-            tag = f"｜档次：{lv}（{level_name(lv)}）" if lv else ""
-            parts.append(f"[{n}] 来源：{d.source_label()}｜类型：{d.doc_type}{tag}\n{d.text}")
+            parts.append(f"[{n}] 来源：{d.source_label()}｜类型：{d.doc_type}\n{d.text}")
             citations.append({"index": n, "source_file": d.source_file,
-                              "library": d.library, "doc_type": d.doc_type,
-                              "level": lv, "topic": (d.meta.get("topic") or ""),
-                              "title": (d.meta.get("title") or "")})
+                              "library": d.library, "doc_type": d.doc_type})
 
     add(past, "该生过往作文（轨迹参考）")
-    add(refs, "相似范文锚点（top-5 命中，按各自标注档次校准）")
+    add(refs, "同题/同档范文锚点（校准参考）")
     ctx = "\n\n---\n\n".join(parts) if parts else "（暂无该生过往作文与范文，纯按评分标准打分）"
     return ctx, citations
 
@@ -75,7 +73,7 @@ def run(essay: str, student: str = "", topic: str = "", grade: str = "",
                         top_k=3, rewrite=False)
     q = topic or essay[:200]
     refs = retrieve(q, library="composition",
-                    filters={"doc_type": "范文"}, top_k=5, rewrite=False)
+                    filters={"doc_type": "范文"}, top_k=3, rewrite=False)
 
     ctx, citations = _build_ref_context(past, refs)
 
@@ -84,17 +82,24 @@ def run(essay: str, student: str = "", topic: str = "", grade: str = "",
         {"role": "user", "content": f"作文题目：{topic or '（未提供）'}\n学生：{student or '（未提供）'}\n\n待批改作文全文：\n{essay}\n\n参考材料：\n{ctx}"},
     ], temperature=0.0)
 
-    total = _score(data.get("total_score"), hi=60)
+    cs = _score(data.get("content_score"))
+    es = _score(data.get("expression_score"))
+    ds = _score(data.get("development_score"))
+    total = cs + es + ds
     level = level_of(total)
 
     result = dict(data)
     result.update({
+        "content_score": cs,
+        "expression_score": es,
+        "development_score": ds,
         "total": total,
         "level": level,
     })
 
     if save:
         save_essay(essay, student=student, topic=topic, level=level, score=total,
+                   content_score=cs, expression_score=es, development_score=ds,
                    comment=data.get("overall_comment", ""), grade=grade)
 
     return ChainResult(content=_render(result), citations=citations, data=result)
@@ -106,9 +111,11 @@ def _render(d: dict) -> str:
         "",
         f"**总分**：{d.get('total', 0)} / 60　**档次**：{d.get('level', '')}（{level_name(d.get('level', ''))}）",
         "",
-        f"**内容点评**：{d.get('content_comment', '')}",
-        f"**表达点评**：{d.get('expression_comment', '')}",
-        f"**发展点评**：{d.get('development_comment', '')}",
+        "| 分项 | 得分 | 点评 |",
+        "|---|---|---|",
+        f"| 内容 | {d.get('content_score', 0)}/20 | {d.get('content_comment', '')} |",
+        f"| 表达 | {d.get('expression_score', 0)}/20 | {d.get('expression_comment', '')} |",
+        f"| 发展 | {d.get('development_score', 0)}/20 | {d.get('development_comment', '')} |",
     ]
 
     def bullet(title, key):

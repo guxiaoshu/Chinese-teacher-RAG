@@ -1,5 +1,8 @@
-# 核心 RAG 框架（只用到 LLM 客户端与文本切分两个包）
+# 核心 RAG 框架
+langchain>=0.3.0
+langchain-core>=0.3.0
 langchain-openai>=0.2.0
+langchain-community>=0.3.0
 langchain-text-splitters>=0.3.0
 
 # 向量库
@@ -13,9 +16,6 @@ modelscope>=1.13.0
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128
 # 再装其余依赖。
 transformers>=4.46.0
-
-# 精排（bge-reranker-base 通过 CrossEncoder 加载）
-sentence-transformers>=3.0.0
 
 # 文档解析
 pypdf>=4.0.0
