@@ -9,6 +9,7 @@ _DOC_TYPES = "、".join(allowed_doc_types())
 _GRADES = "、".join(allowed_grades())
 _KP = "、".join(allowed_knowledge_points())
 _LT = "、".join(allowed_learning_tags())
+#枚举白名单
 
 @dataclass
 class DocTags:
@@ -23,6 +24,8 @@ class DocTags:
 
     def to_metadata(self) -> dict:
         return asdict(self)
+#to_metadata()：直接转字典，刚好传给前面 _flatten_meta，存入 Chroma 元数据。
+
 
 _SYSTEM = f"""你是一名中学语文教研助理，负责给上传的教学文档打标签，用于后续检索。
 
@@ -89,7 +92,9 @@ _SYSTEM = f"""你是一名中学语文教研助理，负责给上传的教学文
 
 只输出 JSON，不要输出其它内容。"""
 
-def classify(text: str, filename: str = "", hint_dir: str = "") -> DocTags:
+def classify(text: str, filename: str = "", hint_dir: str = "") -> DocTags:#主入口函数
+    #文档太长不把全文丢给 LLM
+    #先取前 6000 字符，果全文很长，中间再截取一段 2000 字符，中间打省略标记
     sample = text[:6000]
     if len(text) > 6000:
         sample += "\n...(中段略)...\n" + text[len(text) // 2 : len(text) // 2 + 2000]
@@ -105,9 +110,12 @@ def classify(text: str, filename: str = "", hint_dir: str = "") -> DocTags:
     return tags
 
 def _sanitize(raw: dict) -> DocTags:
+    #清洗函数
+    #把 LLM 返回的原始 dict 做校验、规范化，防止模型输出脏数据：
     doc_type = str(raw.get("doc_type", "其他")).strip()
     if doc_type not in allowed_doc_types():
         doc_type = "其他"
+        #如果 LLM 瞎编一个不在白名单里的 doc_type，强制降级为「其他」
 
     grade = str(raw.get("grade", "")).strip()
     if grade and grade not in allowed_grades():
@@ -129,6 +137,8 @@ def _sanitize(raw: dict) -> DocTags:
     )
 
 def _as_list(v) -> list[str]:
+    #兼容工具函数
+    #LLM 有时候会把数组输出成字符串，或者返回 null，统一标准化成干净字符串列表：
     if v is None:
         return []
     if isinstance(v, str):

@@ -3,11 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 SUPPORTED_EXTS = {".txt", ".pdf", ".docx", ".doc"}
+#白名单，只认这 4 种后缀。
 
 def is_supported(path: Path | str) -> bool:
     return Path(path).suffix.lower() in SUPPORTED_EXTS
+#判断文件能不能解析。
 
-def extract_text(path: Path | str) -> str:
+
+def extract_text(path: Path | str) -> str:#入口主函数
     p = Path(path)
     ext = p.suffix.lower()
     if ext == ".txt":
@@ -21,6 +24,8 @@ def extract_text(path: Path | str) -> str:
     raise ValueError(f"不支持的文件格式: {ext}")
 
 def _read_txt(p: Path) -> str:
+    #读取文本文件
+    #txt 编码不确定（utf8、gbk/gb18030、utf16 都常见）
     data = p.read_bytes()
     for enc in ("utf-8", "gb18030", "utf-16"):
         try:
@@ -29,7 +34,7 @@ def _read_txt(p: Path) -> str:
             continue
     return data.decode("utf-8", errors="ignore")
 
-def _read_pdf(p: Path) -> str:
+def _read_pdf(p: Path) -> str:#读取 PDF， 需要pip install pypdf
     from pypdf import PdfReader
 
     reader = PdfReader(str(p))
@@ -40,7 +45,7 @@ def _read_pdf(p: Path) -> str:
             parts.append(txt)
     return "\n\n".join(parts)
 
-def _read_docx(p: Path) -> str:
+def _read_docx(p: Path) -> str:#读取 docx 新版 Word
     from docx import Document
 
     doc = Document(str(p))
@@ -50,7 +55,7 @@ def _read_docx(p: Path) -> str:
             parts.append("\t".join(cell.text for cell in row.cells))
     return "\n".join(parts)
 
-def _read_doc(p: Path) -> str:
+def _read_doc(p: Path) -> str:#读取老式 .doc 文件
     try:
         import win32com.client
     except ImportError as e:
