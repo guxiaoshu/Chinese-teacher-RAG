@@ -20,7 +20,7 @@ sentence-transformers>=3.0.0
 # 文档解析
 pypdf>=4.0.0
 python-docx>=1.1.0
-pywin32>=306        # 用于 .doc（老格式）通过 Word/WPS COM 转换
+pywin32>=306 ; sys_platform == 'win32'   # 用于 .doc（老格式）通过 Word/WPS COM 转换；仅 Windows，Linux 容器不支持 .doc
 
 # PPT 生成
 python-pptx>=0.6.23

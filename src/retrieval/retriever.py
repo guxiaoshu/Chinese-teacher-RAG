@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+#混合检索（向量检索 + BM25 关键词检索 + RRF 融合 + 精排 + 元数据加权 + 去重）
 import json
 import re
 import threading
@@ -20,17 +20,18 @@ _R = CONFIG["retrieval"]
 _AUTHORITY = authority_weight_map()
 
 _index: dict[str, dict] = {}
+#全局缓存每个库的 BM25 索引，加线程锁保护，避免并发重建索引冲突
 _index_lock = threading.Lock()
 
 @dataclass
 class RetrievedDoc:
-    text: str
-    meta: dict
-    score: float
-    library: str
+    text: str    #chunk 原文
+    meta: dict   #元数据
+    score: float #最终综合得分
+    library: str #属于哪个库 `private/public/composition`
     source_file: str = ""
     doc_type: str = ""
-    chunk_id: str = ""
+    chunk_id: str = "" #Chroma 里的 id
 
     def source_label(self) -> str:
         # 手动保存的修正版（generated=False）单独归「手动上传库」，区别于 AI 自动沉淀
@@ -40,10 +41,11 @@ class RetrievedDoc:
         lib = labels.get(self.library, "知识库")
         return f"【{lib}】{self.source_file}"
 
-def _tokenize(text: str) -> list[str]:
+def _tokenize(text: str) -> list[str]: #BM25 依赖中文分词，用 jieba 切词
     return [t for t in jieba.lcut(text) if t.strip()]
 
 def rebuild_index(library: str | None = None) -> None:
+    #BM25 索引构建 & 懒加载
     libs = [library] if library else list(LIBRARY_COLLECTION.keys())
     for lib in libs:
         data = get_all_documents(lib)
@@ -57,11 +59,13 @@ def rebuild_index(library: str | None = None) -> None:
                            "tokenized": tokenized, "bm25": bm25}
 
 def _ensure_index(library: str) -> dict:
+    #BM25 懒加载
     if library not in _index:
         rebuild_index(library)
     return _index[library]
 
 def _to_where(filters: dict | None) -> dict | None:
+    #Chroma 过滤条件转换
     if not filters:
         return None
     conds = [{k: {"$eq": str(v)}} for k, v in filters.items() if v not in (None, "")]
@@ -73,6 +77,7 @@ def _to_where(filters: dict | None) -> dict | None:
     return {"$and": conds}
 
 def _matches(meta: dict, filters: dict | None) -> bool:
+    #纯内存过滤，给**BM25 检索**用
     if not filters:
         return True
     for k, v in filters.items():
@@ -83,6 +88,7 @@ def _matches(meta: dict, filters: dict | None) -> bool:
     return True
 
 def _vector_rank(library: str, query: str, filters: dict | None, n: int) -> list[str]:
+    #向量召回函数
     emb = embed_query(query)
     col = get_collection(library)
     res = col.query(query_embeddings=[emb], n_results=max(n, 1), where=_to_where(filters))
@@ -96,6 +102,7 @@ def _vector_rank(library: str, query: str, filters: dict | None, n: int) -> list
     return [i for i in ids if i]
 
 def _bm25_rank(library: str, query: str, filters: dict | None, n: int) -> list[str]:
+    #BM25 关键词召回
     idx = _ensure_index(library)
     bm25 = idx.get("bm25")
     if bm25 is None:
@@ -114,6 +121,7 @@ def _bm25_rank(library: str, query: str, filters: dict | None, n: int) -> list[s
     return out
 
 def _rrf(rankings: list[list[str]], k: int) -> list[tuple[str, float]]:
+    #倒数排名融合（混合检索核心）
     scores: dict[str, float] = {}
     for ranking in rankings:
         for rank, doc_id in enumerate(ranking):
@@ -122,6 +130,7 @@ def _rrf(rankings: list[list[str]], k: int) -> list[tuple[str, float]]:
 
 
 def _meta_list(meta: dict, key: str) -> list[str]:
+    #元数据里 JSON 数组解析工具
     """Chroma 把 list 元数据存成了 JSON 字符串，这里统一解析成 list。"""
     v = meta.get(key)
     if v is None:
@@ -140,6 +149,7 @@ def _meta_list(meta: dict, key: str) -> list[str]:
 
 
 def contextualize(text: str, meta: dict) -> str:
+    #chunk 上下文前置包装（非常关键）
 
     if not _R.get("contextualize", True):
         return text
@@ -163,6 +173,7 @@ _GRADE_RE = re.compile("|".join(re.escape(g) for g in allowed_grades()))
 
 
 def _regex_intent(query: str) -> dict:
+    #轻量意图抽取
 
     article = ""
     m = re.search(r"《([^》]{1,30})》", query)
@@ -176,7 +187,7 @@ def _regex_intent(query: str) -> dict:
 
 
 def _metadata_boost(meta: dict, intent: dict) -> float:
-
+    #元数据意图加分
     if not intent:
         return 0.0
     score = 0.0
@@ -200,6 +211,7 @@ def _metadata_boost(meta: dict, intent: dict) -> float:
 
 
 def _recall_candidates(library: str, query: str, filters: dict | None, n: int, intent: dict) -> list[RetrievedDoc]:
+    #单个 query 在单个库的混合召回 + 打分
     vec_ids = _vector_rank(library, query, filters, n)
     bm_ids = _bm25_rank(library, query, filters, n)
     ranked = _rrf([vec_ids, bm_ids], _R["rrf_k"])
@@ -236,6 +248,7 @@ def _recall_candidates(library: str, query: str, filters: dict | None, n: int, i
 
 
 def _recall_library(library: str, queries: list[str], filters: dict | None, top_k: int, intent: dict) -> list[RetrievedDoc]:
+   #多 query 扩展后，合并同一个库的召回结果
     n = max(top_k, _R["bm25_top_k"], _R.get("rerank_candidates", 20))
     merged: dict[str, RetrievedDoc] = {}
     for q in queries:
@@ -253,9 +266,10 @@ _RERANK_SYSTEM = """你是检索结果精排器。给定用户问题和若干候
 2. 判断每片与问题「相关」（能帮助回答/备课该问题）还是「无关」（主题无关，即使个别词重合也不算相关）。
 只输出 JSON：{"rank": [编号...], "relevant": [相关编号...]}。rank 按相关性降序、必须包含所有编号；relevant 是 rank 的子集，只放真正相关的编号。不要输出其它文字。"""
 
+#精排模块（二选一：LLM 精排 / CrossEncoder 交叉编码器精排）
 
 def _llm_rerank(query: str, docs: list[RetrievedDoc]) -> list[RetrievedDoc]:
-
+   #大模型 JSON 精排
     if len(docs) <= 1:
         return docs
     items = []
@@ -303,7 +317,7 @@ _CROSS_AUTHORITY_COEFF = 0.03  # 交叉编码器精排后，权威仅作轻微�
 
 
 def _cross_rerank(query: str, docs: list[RetrievedDoc]) -> list[RetrievedDoc]:
-
+#BGE-Reranker 交叉编码器本地精排
     if len(docs) <= 1:
         return docs
     # 精排只看片段开头（标题/首句通常已含主题），且 bge-reranker 注意力是 O(n²)，
@@ -319,7 +333,7 @@ def _cross_rerank(query: str, docs: list[RetrievedDoc]) -> list[RetrievedDoc]:
     docs.sort(key=lambda d: -d.score)
     return docs
 
-
+#_jaccard + _dedup：基于分词 Jaccard 相似度去重
 def _jaccard(a: str, b: str) -> float:
     sa = set(_tokenize(a))
     sb = set(_tokenize(b))
@@ -343,6 +357,7 @@ def _dedup(docs: list[RetrievedDoc], threshold: float) -> list[RetrievedDoc]:
 
 
 def _rerank(query: str, docs: list[RetrievedDoc], top_k: int, enabled: bool) -> list[RetrievedDoc]:
+    #_rerank 总调度入口
     threshold = float(_R.get("dedup_similarity", 0) or 0)
     if not (enabled and len(docs) > top_k):
         return _dedup(docs, threshold)[:top_k]
@@ -356,6 +371,7 @@ def _rerank(query: str, docs: list[RetrievedDoc], top_k: int, enabled: bool) -> 
 
 def retrieve(query: str, library: str | None = None, filters: dict | None = None,
              top_k: int | None = None, rewrite: bool | None = None) -> list[RetrievedDoc]:
+    #对外主入口：retrieve ()
     # rewrite=None 时读 config 的 retrieval.rewrite（默认关）：false 走纯向量+BM25+RRF 快速路径。
     if rewrite is None:
         rewrite = bool(_R.get("rewrite", True))
@@ -406,7 +422,7 @@ def retrieve(query: str, library: str | None = None, filters: dict | None = None
 
 
 def reembed_library(library: str | None = None) -> int:
-
+    #全库重向量化 + 重建 BM25
     libs = [library] if library else list(LIBRARY_COLLECTION.keys())
     total = 0
     for lib in libs:

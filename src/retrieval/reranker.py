@@ -11,7 +11,7 @@ _model = None
 _lock = threading.Lock()
 
 
-def _model_path() -> str:
+def _model_path() -> str:#解析配置里的 `rerank_model` 路径
     p = str(_R.get("rerank_model") or "").strip()
     if not p:
         return ""
@@ -21,7 +21,7 @@ def _model_path() -> str:
     return str(path.resolve())
 
 
-def available() -> bool:
+def available() -> bool:#预检查、不加载
     """模型文件是否就绪（只查文件、不加载模型，避免每次检索都先拉起模型）。"""
     root = Path(_model_path())
     if not (root / "config.json").exists():
@@ -29,7 +29,7 @@ def available() -> bool:
     return (root / "model.safetensors").exists() or (root / "pytorch_model.bin").exists()
 
 
-def _load():
+def _load():#懒加载 + 双重检查锁 DCL
     global _model
     if _model is None:
         with _lock:
@@ -41,6 +41,7 @@ def _load():
 
 
 def rerank(query: str, texts: list[str]) -> list[float]:
+    #对外主入口，上层 RAG 调用的就是它
     """返回 texts 与 query 的相关度分数（越大越相关），顺序与输入一致。"""
     if not texts:
         return []

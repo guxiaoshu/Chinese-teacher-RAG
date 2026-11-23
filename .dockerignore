@@ -1,0 +1,10 @@
+.venv/
+models/
+data/
+ingest/
+.git/
+__pycache__/
+*.pyc
+.env
+*.drawio
+*.md

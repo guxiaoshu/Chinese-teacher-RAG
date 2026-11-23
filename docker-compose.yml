@@ -1,0 +1,19 @@
+services:
+  rag:
+    build: .
+    image: chinese-teacher-rag:latest
+    ports:
+      - "8501:8501"
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}   # 从宿主机 .env 读入，注入容器
+    volumes:
+      - ./models:/app/models:ro   # 本地 BGE 模型（只读，约 2.7GB，需宿主机已有）
+      - ./data:/app/data          # 向量库 + SQLite + history（运行时写，持久化）
+      - ./ingest:/app/ingest      # 上传的资料
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

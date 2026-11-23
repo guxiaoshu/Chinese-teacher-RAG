@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+#原始用户问句 → 【单句改写 / 多查询扩展 / 结构化意图抽取 / 多轮历史消指代改写】
 from functools import lru_cache
 
 from ..config import api_key_ready, allowed_grades, allowed_knowledge_points, CONFIG
@@ -31,7 +31,7 @@ def _rewrite_cached(q: str) -> str:
         return q
 
 
-def rewrite_query(query: str) -> str:
+def rewrite_query(query: str) -> str:#基础查询改写
     q = (query or "").strip()
     if not q or not api_key_ready():
         return query
@@ -50,7 +50,7 @@ _EXPAND_SYSTEM = """你是中学语文检索查询扩展器。把老师/学生�
 
 
 @lru_cache(maxsize=1024)
-def _expand_cached(q: str) -> list[str]:
+def _expand_cached(q: str) -> list[str]:#多查询扩展（Multi-Query）
     try:
         raw = invoke_json([
             {"role": "system", "content": _EXPAND_SYSTEM},
@@ -66,7 +66,7 @@ def _expand_cached(q: str) -> list[str]:
         return [q]
 
 
-def expand_queries(query: str) -> list[str]:
+def expand_queries(query: str) -> list[str]:#结构化意图抽取（给元数据加权用）
     q = (query or "").strip()
     if not q or not api_key_ready():
         return [query]
@@ -123,6 +123,7 @@ _HISTORY_REWRITE_SYSTEM = """你是中学语文多轮对话查询改写器。给
 
 
 def rewrite_with_history(query: str, history: list[dict]) -> str:
+    #多轮对话改写（指代消解）
     """把最新提问结合对话历史改写成独立完整的检索查询（解决「那/它」等指代）。
 
     history 形如 [{"role": "user"/"assistant", "content": "..."}, ...]，按时间顺序。
