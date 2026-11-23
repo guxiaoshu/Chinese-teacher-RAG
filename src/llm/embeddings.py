@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+#BGE 类中文 Embedding 模型
 import threading
 
 import torch
@@ -17,10 +17,10 @@ _model = None
 _tokenizer = None
 _device = None
 _lock = threading.Lock()
-
+#线程锁，懒加载模型时防止多线程并发重复加载模型
 def _load():
     global _model, _tokenizer, _device
-    if _model is None:
+    if _model is None:#DCL 双重检查锁，多线程安全单例
         with _lock:
             if _model is None:
                 try:
@@ -67,14 +67,14 @@ def _encode_one(model, tok, device, text: str):
     windows: list[list[int]] = []
     for i in range(0, len(ids), step):
         w = ids[i : i + content_max]
-        if len(w) < 16:
+        if len(w) < 16:#丢弃不足 16token 的碎片窗口，减少噪声
             continue
-        windows.append([cls_id] + w + [sep_id])
+        windows.append([cls_id] + w + [sep_id])#每个窗口独立加上`CLS`、`SEP`，单独送进模型
     if not windows:
         windows = [[cls_id] + ids[:content_max] + [sep_id]]
 
     cls_vecs = []
-    for i in range(0, len(windows), _BATCH_SIZE):
+    for i in range(0, len(windows), _BATCH_SIZE):#窗口本身也做 batch，不是串行跑，提升 GPU 利用率
         batch = windows[i : i + _BATCH_SIZE]
         padded = torch.nn.utils.rnn.pad_sequence(
             [torch.tensor(w, dtype=torch.long) for w in batch],
@@ -87,7 +87,7 @@ def _encode_one(model, tok, device, text: str):
     return torch.cat(cls_vecs, dim=0).mean(dim=0, keepdim=True)
 
 
-def _encode(texts: list[str], normalize: bool = True):
+def _encode(texts: list[str], normalize: bool = True):#长短分流
     model, tok, device = _load()
     if not texts:
         return torch.empty((0, model.config.hidden_size)).cpu().numpy()
@@ -115,9 +115,12 @@ def _encode(texts: list[str], normalize: bool = True):
     out = torch.stack(vecs, dim=0)
     if normalize:
         out = F.normalize(out, p=2, dim=1)
+        #向量 L2 归一化
+        #余弦相似度计算等价于内积
     return out.cpu().numpy()
 
 def embed_documents(texts: list[str]) -> list[list[float]]:
+    #文档：直接原文编码
     if not texts:
         return []
     results: list[list[float]] = []
@@ -127,4 +130,5 @@ def embed_documents(texts: list[str]) -> list[list[float]]:
     return results
 
 def embed_query(text: str) -> list[float]:
+    #自动加上query instruction前缀
     return _encode([_QUERY_INSTRUCTION + text], normalize=True).tolist()[0]
