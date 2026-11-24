@@ -34,9 +34,14 @@ def _score(v, hi: int = 20) -> int:
         return max(0, min(hi, int(v)))
     except Exception:
         return 0
+    # 做数值兜底钳位：转整数，限制 `[0, hi]`；这里调用传 hi=60，
+    # 把 LLM 返回的总分锁死在 0–60；LLM 返回脏数据、非数字时兜底返回 0。
 
 
-def _build_ref_context(past, refs) -> tuple[str, list[dict]]:
+def _build_ref_context(past, refs) -> tuple[str, list[dict]]:#拼装批改参考上下文
+#     两个来源：
+# - `past`：该学生过往作文
+# - `refs`：同主题范文锚点（top5）
     parts: list[str] = []
     citations: list[dict] = []
     n = 0
@@ -62,8 +67,13 @@ def _build_ref_context(past, refs) -> tuple[str, list[dict]]:
     return ctx, citations
 
 
-def run(essay: str, student: str = "", topic: str = "", grade: str = "",
+def run(essay: str, student: str = "", topic: str = "", grade: str = "", #批改主入口
         save: bool = True) -> ChainResult:
+# - `essay`：待批改作文正文
+# - `student`：学生标识（用来检索同一个人历史作文；不传就不查轨迹）
+# - `topic`：作文题
+# - `grade`：年级，入库元信息用
+# - `save`：是否保存本次批改记录
     essay = (essay or "").strip()
     if not essay:
         return ChainResult(content="作文内容为空，请先粘贴或上传作文。", citations=[], data={})

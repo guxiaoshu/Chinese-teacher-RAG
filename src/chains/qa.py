@@ -18,6 +18,11 @@ _SYSTEM = """你是老师私人的语文教学答疑助手。为学生答疑时�
 def run(query: str, save: bool = True, memory: str = "", history: list[dict] | None = None) -> ChainResult:
     history = (history or [])[-12:]  # 最多带最近 6 轮，避免上下文无限增长
     # 多轮：结合历史把提问改写成独立完整的问题（补全「那」「它」等指代）再检索
+    #主入口函数
+    #  `query`：当前这一轮用户提问
+    #  `save`：是否保存本次答疑记录到生成库，分类标记为 “答疑”
+    #  `memory`：预留的记忆串（和另外两条链路保持接口统一）
+    #  `history`：**多轮对话历史消息列表**，是这条链路最关键新增参数
     search_query = rewrite_with_history(query, history) if history else query
     docs = retrieve(search_query)
     if should_refuse(docs):

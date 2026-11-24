@@ -6,6 +6,7 @@ from ..config import CONFIG, api_key_ready
 from ..ingestion.generated import save_generated
 from .common import ChainResult, build_context, with_memory, should_refuse, REFUSAL_MESSAGE
 
+#教案生成主 Prompt
 _SYSTEM = """你是一位资深中学语文教研员，为一位有多年教学沉淀的老师做「针对性备课」。
 
 你会拿到老师自己历年沉淀的资料（【私有知识库】）+ 教材课标（【公共基准库】），
@@ -23,6 +24,7 @@ _SYSTEM = """你是一位资深中学语文教研员，为一位有多年教学�
 9. 用 Markdown 输出，语言贴合一线教学，不空谈理论、不套模板话术。
 """
 
+#`_VERIFY_SYSTEM`：接地校验器 Prompt
 _VERIFY_SYSTEM = """你是教案引用接地校验器。判断一份教案里，哪些结论/说法没有被给定的参考材料支撑（属于模型凭常识补充、但未落到检索材料上的内容）。
 
 规则：
@@ -32,6 +34,7 @@ _VERIFY_SYSTEM = """你是教案引用接地校验器。判断一份教案里，
 
 
 def _verify_grounding(content: str, ctx: str) -> list[dict]:
+    #调用上面的校验器，跑一遍自检。
     if not CONFIG.get("generation", {}).get("verify_grounding", True) or not api_key_ready():
         return []
     try:
@@ -45,6 +48,8 @@ def _verify_grounding(content: str, ctx: str) -> list[dict]:
 
 
 def _format_warning(issues: list[dict]) -> str:
+    #把校验出来的 issues 美化成一段 Markdown 警告文本。
+    #没有问题返回空字符串。
     """把自检问题格式化成提示块（空列表返回空串）。"""
     if not issues:
         return ""
@@ -55,6 +60,9 @@ def _format_warning(issues: list[dict]) -> str:
 
 
 def prepare(query: str, memory: str = "") -> tuple[str, str, list[dict], bool]:
+    #核心预处理
+    #`query`：老师的备课请求，比如 “备课《紫藤萝瀑布》第一课时”
+    #`memory`：对话记忆，多轮对话的时候带上之前上下文
     """检索 + 组装消息，返回 (user 消息, 检索上下文, 引用列表, 是否拒答)，供流式与整段生成共用。"""
     docs = retrieve(query)
     if should_refuse(docs):
@@ -66,7 +74,7 @@ def prepare(query: str, memory: str = "") -> tuple[str, str, list[dict], bool]:
 
 def _llm(use_reason: bool, streaming: bool = False):
     return get_reason_llm(streaming=streaming) if use_reason else get_chat_llm(streaming=streaming)
-
+    #`use_reason=True` → 使用推理版 LLM
 
 def stream_from(user: str, use_reason: bool = False):
     """流式生成教案正文；检索由 prepare 先取，引用自检由 grounding_warning 后置。"""
@@ -86,6 +94,10 @@ def grounding_warning(content: str, ctx: str) -> str:
 
 
 def run(query: str, save: bool = True, memory: str = "", use_reason: bool = False) -> ChainResult:
+    #一次性全量生成的主入口
+    # 1. 调用 prepare：检索、组装上下文、判断是否拒答
+    # 2. 拿到对应 LLM，一次性 invoke 生成完整教案 content
+    # 3. `save=True` 时，调用 `save_generated`，把这次「备课需求 + 成品教案」存入历史库
     user, ctx, citations, refuse = prepare(query, memory)
     if refuse:
         return ChainResult(content=REFUSAL_MESSAGE, citations=[])

@@ -29,6 +29,10 @@ _SYSTEM = """你是中学语文命题专家，为老师「针对学生真实踩�
 """
 
 def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
+    #主入口函数（同步出题接口）
+    #  `query`：出题需求，例：“针对《桃花源记》实词易错点出 3 道选择题”
+    #  `save`：是否保存本次生成记录，默认 True
+    #  `memory`：多轮对话记忆
     docs = retrieve(query, library="private")
     if should_refuse(docs):
         return ChainResult(content="私有库还没有学生错题/作答样本，无法出题。请先上传错题或作答样本到「入库」页。", citations=[])
@@ -44,6 +48,9 @@ def run(query: str, save: bool = True, memory: str = "") -> ChainResult:
     return ChainResult(content=content, citations=citations, data=data)
 
 def _render(data: dict) -> str:
+    #渲染函数
+    #纯格式化工具，**不改动题目逻辑，只做展示层转换**：
+    #输入是 LLM 输出的标准 JSON，输出 Markdown
     lines = [f"# {data.get('title', '')}"]
     for i, item in enumerate(data.get("items", []), 1):
         lines.append(f"\n## 第 {i} 题（{item.get('type', '')}）")
